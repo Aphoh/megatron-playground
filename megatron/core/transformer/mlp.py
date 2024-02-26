@@ -186,3 +186,75 @@ class MLP(MegatronModule):
             prev_sh_ten.replica_id,
         )
         return sharded_state_dict
+
+@dataclass
+class MLPDShardSubmodules(MLPSubmodules):
+    linear_fc1_shard_mask: Union[ModuleSpec, type] = None
+
+
+class MLPDShard(MLP):
+    def __init__(
+        self, config: TransformerConfig, submodules: MLPDShardSubmodules, is_expert: bool = False
+    ):
+        if is_expert:
+            raise ValueError("MLPDShard should only be used for non-expert models")
+        if config.gated_linear_unit:
+            raise ValueError("MLPDShard does not support gated linear units")
+
+        super().__init__(config, submodules, is_expert=is_expert)
+
+        self.linear_fc1_shard_mask = build_module(
+            submodules.linear_fc1_shard_mask,
+            self.config.hidden_size,
+            self.config.ffn_hidden_size,
+            config=self.config,
+            init_method=self.config.init_method,
+            gather_output=True,
+            bias=False,
+            tp_comm_buffer_name='fc1_shard_mask',
+        )
+        if self.linear_fc1_shard_mask.tp_size > 1:
+            raise ValueError("MLPDShard does not support tensor parallelism")
+
+        self.experts_per_token = self.config.ffn_hidden_size // self.config.dsparse_factor
+
+    def forward(self, hidden_states):
+
+        # [s, b, 4 * h/p]
+        intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
+
+        if self.config.bias_activation_fusion:
+            if self.activation_func == F.gelu:
+                assert self.config.add_bias_linear is True
+                intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)
+            elif self.activation_func == F.silu and self.config.gated_linear_unit:
+                intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
+            else:
+                raise ValueError("Only support fusion of gelu and swiglu")
+        else:
+            if bias_parallel is not None:
+                intermediate_parallel = intermediate_parallel + bias_parallel
+            if self.config.gated_linear_unit:
+
+                def glu(x):
+                    x = torch.chunk(x, 2, dim=-1)
+                    return self.config.activation_func(x[0]) * x[1]
+
+                intermediate_parallel = glu(intermediate_parallel)
+            else:
+                intermediate_parallel = self.activation_func(intermediate_parallel)
+
+        mask_logits = self.linear_fc1_shard_mask(hidden_states)
+
+        # mask is [s*b, ff] 
+        s, b, dff = intermediate_parallel.shape
+        sm_mask = torch.softmax(mask_logits, dim=1) # softmax over experts
+        ind, vals = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
+        mask = torch.zeros_like(mask_logits)
+        mask.scatter_(1, ind, vals)
+        intermediate_parallel *= mask.view(s, b, dff)
+
+        # [s, b, h]
+        output, output_bias = self.linear_fc2(intermediate_parallel)
+
+        return output, output_bias

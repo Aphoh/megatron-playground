@@ -65,6 +65,7 @@ class TransformerConfig(ModelParallelConfig):
             moe_z_loss_coeff (float): Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.
             moe_input_jitter_eps (float): Add noise to the input tensor by applying jitter with a specified epsilon value.
             moe_token_dropping (bool): This feature involves selectively dropping and padding tokens for each expert to achieve a specified capacity, similar to GShard, Switch-Transformer, and DeepSpeed-MoE. Note: Currently unsupported.
+            dsparse_factor (int or None): If not None, use 1/dsparse_factor sparsity in the mlp layers. Defaults to None.
     """
 
     # model architecture
@@ -138,6 +139,8 @@ class TransformerConfig(ModelParallelConfig):
     moe_input_jitter_eps: float = None
     moe_token_dropping: bool = False  # TODO: Support token dropping.
 
+    dsparse_factor: int = None
+
     def __post_init__(self):
         """ Python dataclass method that is used to modify attributes after initialization.
             See https://docs.python.org/3/library/dataclasses.html#post-init-processing for more details.
@@ -156,6 +159,14 @@ class TransformerConfig(ModelParallelConfig):
 
         if self.ffn_hidden_size is None:
             self.ffn_hidden_size = 4 * self.hidden_size
+
+        if self.dsparse_factor is not None:
+            if self.dsparse_factor <= 0:
+                raise ValueError(f'dsparse_factor={self.dsparse_factor} must be positive.')
+            if self.ffn_hidden_size % self.dsparse_factor != 0:
+                raise ValueError(
+                    f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_factor: {self.dsparse_factor}'
+                )
 
         if self.kv_channels is None:
             self.kv_channels = self.hidden_size // self.num_attention_heads
