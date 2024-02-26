@@ -25,6 +25,7 @@ from megatron.utils import (
 )
 from megatron.arguments import core_transformer_config_from_args
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+import wandb
 
 
 def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megatron.model.GPTModel]:
@@ -201,6 +202,7 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 if __name__ == "__main__":
 
+    wandb.init(project="dsparse-megatron", sync_tensorboard=True)
     # Temporary for transition to core datasets
     train_valid_test_datasets_provider.is_distributed = True
 
