@@ -1484,5 +1484,6 @@ def _add_experimental_args(parser):
                        '`transformer_block.py`, or `transformer_layer.py`')
     
     group.add_argument("--dsparse-factor", type=int, default=None, help="DSparsity factor for the model")
+    group.add_argument("--dsparse-nblocks", type=int, default=None, help="DSparsity nblocks for the model")
 
     return parser

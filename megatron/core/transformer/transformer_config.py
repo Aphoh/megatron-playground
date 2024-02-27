@@ -66,6 +66,7 @@ class TransformerConfig(ModelParallelConfig):
             moe_input_jitter_eps (float): Add noise to the input tensor by applying jitter with a specified epsilon value.
             moe_token_dropping (bool): This feature involves selectively dropping and padding tokens for each expert to achieve a specified capacity, similar to GShard, Switch-Transformer, and DeepSpeed-MoE. Note: Currently unsupported.
             dsparse_factor (int or None): If not None, use 1/dsparse_factor sparsity in the mlp layers. Defaults to None.
+            dsparse_nblocks (int or None): If None and dsparse_factor is set, uses ffn_hidden_size blocks. Defaults to None.
     """
 
     # model architecture
@@ -140,6 +141,7 @@ class TransformerConfig(ModelParallelConfig):
     moe_token_dropping: bool = False  # TODO: Support token dropping.
 
     dsparse_factor: int = None
+    dsparse_nblocks: int = None
 
     def __post_init__(self):
         """ Python dataclass method that is used to modify attributes after initialization.
@@ -163,10 +165,17 @@ class TransformerConfig(ModelParallelConfig):
         if self.dsparse_factor is not None:
             if self.dsparse_factor <= 0:
                 raise ValueError(f'dsparse_factor={self.dsparse_factor} must be positive.')
-            if self.ffn_hidden_size % self.dsparse_factor != 0:
+            if self.dsparse_nblocks is None:
+                self.dsparse_nblocks = self.ffn_hidden_size 
+            if self.dsparse_nblocks % self.dsparse_factor != 0:
                 raise ValueError(
-                    f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_factor: {self.dsparse_factor}'
+                    f"dsparse_nblocks ({self.dsparse_nblocks}) must be a multiple of dsparse_factor ({self.dsparse_factor})."
                 )
+            if self.ffn_hidden_size % self.dsparse_nblocks != 0:
+                raise ValueError(
+                    f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_nblocks: {self.dsparse_nblocks}'
+                )
+            print("Got dsparse config with factor: ", self.dsparse_factor, " and nblocks: ", self.dsparse_nblocks)
 
         if self.kv_channels is None:
             self.kv_channels = self.hidden_size // self.num_attention_heads
