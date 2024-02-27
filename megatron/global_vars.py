@@ -104,8 +104,8 @@ def set_global_variables(args, build_tokenizer=True):
     _build_num_microbatches_calculator(args)
     if build_tokenizer:
         _ = _build_tokenizer(args)
-    _set_tensorboard_writer(args)
     _set_wandb_writer(args)
+    _set_tensorboard_writer(args)
     _set_one_logger(args)
     _set_adlr_autoresume(args)
     _set_timers(args)
@@ -153,6 +153,10 @@ def _set_tensorboard_writer(args):
     global _GLOBAL_TENSORBOARD_WRITER
     _ensure_var_is_not_initialized(_GLOBAL_TENSORBOARD_WRITER,
                                    'tensorboard writer')
+    
+    if getattr(args, 'wandb_project', '') and args.rank == (args.world_size - 1):
+        # Make sure wandb is initialized before creating the tensorboard writer.
+        _ensure_var_is_initialized(_GLOBAL_WANDB_WRITER, 'wandb writer')
 
     if hasattr(args, 'tensorboard_dir') and \
        args.tensorboard_dir and args.rank == (args.world_size - 1):
@@ -176,6 +180,9 @@ def _set_wandb_writer(args):
         if args.wandb_exp_name == '':
             raise ValueError("Please specify the wandb experiment name!")
 
+        if not args.tensorboard_dir:
+            raise ValueError("Please specify the tensorboard directory to sync with wandb!")
+
         import wandb
         if args.wandb_save_dir:
             save_dir = args.wandb_save_dir
@@ -186,6 +193,7 @@ def _set_wandb_writer(args):
             'dir': save_dir,
             'name': args.wandb_exp_name,
             'project': args.wandb_project,
+            'sync_tensorboard': True,
             'config': vars(args)}
         os.makedirs(wandb_kwargs['dir'], exist_ok=True)
         wandb.init(**wandb_kwargs)

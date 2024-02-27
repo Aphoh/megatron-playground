@@ -202,7 +202,6 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 if __name__ == "__main__":
 
-    wandb.init(project="dsparse-megatron", sync_tensorboard=True)
     # Temporary for transition to core datasets
     train_valid_test_datasets_provider.is_distributed = True
 

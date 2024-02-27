@@ -1474,5 +1474,7 @@ def _add_experimental_args(parser):
                        'To use local spec specify local as the argument.'
                        'For more details, see the model class, '
                        '`transformer_block.py`, or `transformer_layer.py`')
+    
+    group.add_argument("--dsparse-factor", type=int, default=None, help="DSparsity factor for the model")
 
     return parser
