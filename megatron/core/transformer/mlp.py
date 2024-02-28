@@ -209,9 +209,11 @@ class MLPDShard(MLP):
             self.config.dsparse_nblocks,
             config=self.config,
             init_method=self.config.init_method,
-            gather_output=True,
+            gather_output=False,
             bias=False,
             tp_comm_buffer_name='fc1_shard_mask',
+            skip_bias_add=True,
+            is_expert=False,
         )
         if self.linear_fc1_shard_mask.tp_size > 1:
             raise ValueError("MLPDShard does not support tensor parallelism")
@@ -246,14 +248,16 @@ class MLPDShard(MLP):
             else:
                 intermediate_parallel = self.activation_func(intermediate_parallel)
 
-        # mask is [s*b, nblocks] 
-        mask_logits = self.linear_fc1_shard_mask(hidden_states)
+        # mask is [s, b, nblocks] 
+        mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)
+        s, b, nblocks = mask_logits.shape
+        mask_logits = mask_logits.view(s*b, nblocks) # [s*b, nblocks]
 
         sm_mask = torch.softmax(mask_logits, dim=1) # softmax over experts
-        ind, vals = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
+        vals, ind = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
         mask = torch.zeros_like(mask_logits)
         mask.scatter_(1, ind, vals)
-        mask = mask.repeat_interleave(self.expert_width, dim=1)
+        mask = mask.repeat_interleave(self.expert_width, dim=1) # [s*b, dff]
 
         intermediate_parallel *= mask.view(intermediate_parallel.shape)
 

@@ -109,11 +109,12 @@ def get_gpt_dsparse_layer_with_transformer_engine_spec(
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
+            input_layernorm=IdentityOp if use_te else FusedLayerNorm,
             self_attention=ModuleSpec(
                 module=SelfAttention,
                 params={"attn_mask_type": AttnMaskType.causal},
                 submodules=SelfAttentionSubmodules(
-                    linear_qkv=TEColumnParallelLinear if use_te else ColumnParallelLinear,
+                    linear_qkv=TELayerNormColumnParallelLinear if use_te else ColumnParallelLinear,
                     core_attention=TEDotProductAttention if use_te else DotProductAttention,
                     linear_proj=TERowParallelLinear if use_te else RowParallelLinear,
                 ),
