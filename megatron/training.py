@@ -276,14 +276,14 @@ def pretrain(train_valid_test_dataset_provider,
         evaluate_and_print_results(prefix, forward_step_func,
                                    valid_data_iterator, model,
                                    iteration, process_non_loss_data_func, config,
-                                   verbose=True, write_to_tensorboard=not args.skip_train)
+                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=False)
 
     if args.do_test:
         prefix = f'iteration {iteration} on test set'
         evaluate_and_print_results(prefix, forward_step_func,
                                    test_data_iterator, model,
                                    iteration, process_non_loss_data_func, config,
-                                   verbose=True, write_to_tensorboard=not args.skip_train)
+                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=True)
 
 
 
@@ -1091,9 +1091,10 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     writer = get_tensorboard_writer()
     if writer:
         writer.flush()
-    wandb_writer = get_wandb_writer()
-    if wandb_writer:
-        wandb_writer.finish()
+    # Note(Will): Not sure why this was here in the first place, but it causes wandb to not write test logs
+    # wandb_writer = get_wandb_writer()
+    # if wandb_writer:
+    #     wandb_writer.finish()
 
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
     if args.use_distributed_optimizer and args.overlap_param_gather:
@@ -1208,7 +1209,7 @@ def evaluate(forward_step_func,
 def evaluate_and_print_results(prefix, forward_step_func,
                                data_iterator, model,
                                iteration, process_non_loss_data_func, config,
-                               verbose=False, write_to_tensorboard=True):
+                               verbose=False, write_to_tensorboard=True, is_test=False):
     """Helper function to evaluate and dump results on screen."""
     args = get_args()
     if write_to_tensorboard:
@@ -1224,26 +1225,27 @@ def evaluate_and_print_results(prefix, forward_step_func,
     # Timelimit hit during evaluation
     if timelimit:
         return
-    string = ' validation loss at {} | '.format(prefix)
+    loss_type = 'test' if is_test else 'validation'
+    string = ' {} loss at {} | '.format(loss_type, prefix)
     for key in total_loss_dict:
         string += '{} value: {:.6E} | '.format(key, total_loss_dict[key].item())
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += '{} PPL: {:.6E} | '.format(key, ppl)
         if writer:
-            writer.add_scalar('{} validation'.format(key),
+            writer.add_scalar('{} {}'.format(loss_type, key),
                               total_loss_dict[key].item(),
                               iteration)
-            writer.add_scalar('{} validation vs samples'.format(key),
+            writer.add_scalar('{} {} vs samples'.format(loss_type, key),
                               total_loss_dict[key].item(),
                               args.consumed_train_samples)
             if args.log_validation_ppl_to_tensorboard:
-                writer.add_scalar('{} validation ppl'.format(key), ppl,
+                writer.add_scalar('{} {} ppl'.format(key, loss_type), ppl,
                                   iteration)
-                writer.add_scalar('{} validation ppl vs samples'.format(key),
+                writer.add_scalar('{} {} ppl vs samples'.format(key, loss_type),
                                   ppl, args.consumed_train_samples)
             if wandb_writer and is_last_rank():
                 wandb_writer.log({
-                    '{} validation'.format(key): total_loss_dict[key].item()},
+                    '{} {}'.format(key, loss_type): total_loss_dict[key].item()},
                     iteration)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
