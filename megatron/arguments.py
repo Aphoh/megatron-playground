@@ -1485,5 +1485,6 @@ def _add_experimental_args(parser):
     
     group.add_argument("--dsparse-factor", type=int, default=None, help="DSparsity factor for the model")
     group.add_argument("--dsparse-nblocks", type=int, default=None, help="DSparsity nblocks for the model")
+    group.add_argument("--finetune-dsparse", action="store_true", help="Finetune the model with DSparsity")
 
     return parser

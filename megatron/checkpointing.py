@@ -555,7 +555,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
     set_checkpoint_version(state_dict.get('checkpoint_version', 0))
 
     # Set iteration.
-    if args.finetune or release:
+    if args.finetune or release or args.dsparse_finetune:
         iteration = 0
     else:
         try:
@@ -585,13 +585,15 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
         print_rank_0('could not find arguments in the checkpoint ...')
 
     # Model.
-    strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' else strict
+    strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' or args.dsparse_finetune else strict
     if len(model) == 1:
-        model[0].load_state_dict(state_dict['model'], strict=strict)
+        incompat = model[0].load_state_dict(state_dict['model'], strict=strict)
+        print_rank_0(f'loaded model with incompat keys: {incompat}')
     else:
         for i in range(len(model)):
             mpu.set_virtual_pipeline_model_parallel_rank(i)
-            model[i].load_state_dict(state_dict['model%d' % i], strict=strict)
+            incompat = model[i].load_state_dict(state_dict['model%d' % i], strict=strict)
+            print_rank_0(f'loaded model {i} with incompat keys: {incompat}')
 
     # Fix up query/key/value matrix ordering if needed.
     checkpoint_version = get_checkpoint_version()
@@ -599,7 +601,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
     fix_query_key_value_ordering(model, checkpoint_version)
 
     # Optimizer.
-    if not release and not args.finetune and not args.no_load_optim:
+    if not release and not args.finetune and not args.dsparse_finetune and not args.no_load_optim:
         try:
             # Load state dict.
             if optimizer is not None:
