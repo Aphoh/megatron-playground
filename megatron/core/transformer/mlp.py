@@ -256,6 +256,7 @@ class MLPDShard(MLP):
         print("experts_per_token", self.experts_per_token, "temperature", self.temperature)
 
         sm_mask = torch.softmax(mask_logits / self.temperature, dim=1) # softmax over experts
+        # sm_mask = sm_mask / sm_mask.mean(dim=0) TODO: config this when annealing
         vals, ind = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
         mask = torch.zeros_like(mask_logits)
         mask.scatter_(1, ind, vals)

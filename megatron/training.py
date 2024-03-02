@@ -476,10 +476,11 @@ def get_optimizer_param_scheduler(optimizer, model):
         from megatron.optimizer_param_scheduler import DSparseScheduler
         @torch.no_grad()
         def dsp_set_fn(t, k):
-            for module in model.modules():
-                if type(module) == MLPDShard:
-                    module.experts_per_token = k
-                    module.temperature = t
+            for m in model:
+                for module in m.modules():
+                    if type(module) == MLPDShard:
+                        module.experts_per_token = k
+                        module.temperature = t
         cls = DSparseScheduler
         kwargs.update({
             'dsp_start_t': args.dsparse_start_t, 
@@ -488,7 +489,7 @@ def get_optimizer_param_scheduler(optimizer, model):
             'dsp_end_k': args.dsparse_nblocks // args.dsparse_factor,
             'dsp_set_fn': dsp_set_fn,
         })
-    print("Optimizer setup with kwargs: ", {f"{k}: {v}" for k, v in kwargs if type(v) in [int, float, str]})
+    print("Optimizer setup with kwargs: ", {f"{k}: {v}" for k, v in kwargs.items() if type(v) in [int, float, str]}) 
     opt_param_scheduler = cls(**kwargs)
 
     return opt_param_scheduler
