@@ -39,6 +39,7 @@ from megatron.model import GPTModel
 from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import finalize_model_grads
 from megatron.core.enums import ModelType
+from megatron.core.transformer.mlp import MLPDShard
 from megatron.core.optimizer import get_megatron_optimizer, OptimizerConfig
 from megatron.initialize import initialize_megatron
 from megatron.initialize import write_args_to_tensorboard
@@ -423,7 +424,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
     return model
 
 
-def get_optimizer_param_scheduler(optimizer):
+def get_optimizer_param_scheduler(optimizer, model):
     """Build the learning rate scheduler."""
     args = get_args()
 
@@ -455,20 +456,40 @@ def get_optimizer_param_scheduler(optimizer):
         raise Exception(
             'either train-iters or train-samples should be provided.')
 
-    opt_param_scheduler = OptimizerParamScheduler(
-        optimizer,
-        init_lr=args.lr_warmup_init,
-        max_lr=args.lr,
-        min_lr=args.min_lr,
-        lr_warmup_steps=lr_warmup_steps,
-        lr_decay_steps=lr_decay_steps,
-        lr_decay_style=args.lr_decay_style,
-        start_wd=args.start_weight_decay,
-        end_wd=args.end_weight_decay,
-        wd_incr_steps=wd_incr_steps,
-        wd_incr_style=args.weight_decay_incr_style,
-        use_checkpoint_opt_param_scheduler=args.use_checkpoint_opt_param_scheduler,
-        override_opt_param_scheduler=args.override_opt_param_scheduler)
+    kwargs = {
+        'optimizer': optimizer,
+        'init_lr': args.lr_warmup_init,
+        'max_lr': args.lr,
+        'min_lr': args.min_lr,
+        'lr_warmup_steps': lr_warmup_steps,
+        'lr_decay_steps': lr_decay_steps,
+        'lr_decay_style': args.lr_decay_style,
+        'start_wd': args.start_weight_decay,
+        'end_wd': args.end_weight_decay,
+        'wd_incr_steps': wd_incr_steps,
+        'wd_incr_style': args.weight_decay_incr_style,
+        'use_checkpoint_opt_param_scheduler': args.use_checkpoint_opt_param_scheduler,
+        'override_opt_param_scheduler': args.override_opt_param_scheduler
+    }
+    cls = OptimizerParamScheduler
+    if args.dsparse_anneal:
+        from megatron.optimizer_param_scheduler import DSparseScheduler
+        @torch.no_grad()
+        def dsp_set_fn(t, k):
+            for module in model.modules():
+                if type(module) == MLPDShard:
+                    module.experts_per_token = k
+                    module.temperature = t
+        cls = DSparseScheduler
+        kwargs.update({
+            'dsp_start_t': args.dsparse_start_t, 
+            'dsp_end_t': 1, 
+            'dsp_start_k': args.dsparse_nblocks,
+            'dsp_end_k': args.dsparse_nblocks // args.dsparse_factor,
+            'dsp_set_fn': dsp_set_fn,
+        })
+    print("Optimizer setup with kwargs: ", {f"{k}: {v}" for k, v in kwargs if type(v) in [int, float, str]})
+    opt_param_scheduler = cls(**kwargs)
 
     return opt_param_scheduler
 
@@ -491,7 +512,7 @@ def setup_model_and_optimizer(model_provider_func,
     config = OptimizerConfig(**kwargs)
     optimizer = get_megatron_optimizer(config, model, no_wd_decay_cond,
                                        scale_lr_cond, lr_mult)
-    opt_param_scheduler = get_optimizer_param_scheduler(optimizer)
+    opt_param_scheduler = get_optimizer_param_scheduler(optimizer, unwrapped_model)
 
     if args.load is not None:
         timers = get_timers()
@@ -587,7 +608,7 @@ def train_step(forward_step_func, data_iterator,
 
 def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
-                 grad_norm, params_norm, num_zeros_in_grad):
+                 grad_norm, params_norm, num_zeros_in_grad, dsparse_k=None, dsparse_t=None):
     """Log training information such as losses, timing, ...."""
     args = get_args()
     timers = get_timers()
@@ -739,6 +760,13 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                 mem_stats["allocation.all.current"],
                 iteration,
             )
+        
+        if dsparse_k and dsparse_t:
+            writer.add_scalar('dsparse-k', dsparse_k, iteration)
+            writer.add_scalar('dsparse-t', dsparse_t, iteration)
+            if wandb_writer:
+                wandb_writer.log({'dsparse-k': dsparse_k}, iteration)
+                wandb_writer.log({'dsparse-t': dsparse_t}, iteration)
 
     if iteration % args.log_interval == 0:
         elapsed_time = timers('interval-time').elapsed(barrier=True)
@@ -993,7 +1021,9 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                                           optimizer.param_groups[0]['lr'],
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad)
+                                          grad_norm, params_norm, num_zeros_in_grad,
+                                          dsparse_k=getattr(opt_param_scheduler, "dsp_k", None),
+                                          dsparse_t=getattr(opt_param_scheduler, "dsp_t", None))
 
         # Autoresume
         if args.adlr_autoresume and \

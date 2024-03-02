@@ -219,6 +219,7 @@ class MLPDShard(MLP):
             raise ValueError("MLPDShard does not support tensor parallelism")
 
         self.experts_per_token = self.config.dsparse_nblocks // self.config.dsparse_factor
+        self.temperature = 1
         self.expert_width = self.config.ffn_hidden_size // self.config.dsparse_nblocks
         print(f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}")
 
@@ -252,8 +253,9 @@ class MLPDShard(MLP):
         mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)
         s, b, nblocks = mask_logits.shape
         mask_logits = mask_logits.view(s*b, nblocks) # [s*b, nblocks]
+        print("experts_per_token", self.experts_per_token, "temperature", self.temperature)
 
-        sm_mask = torch.softmax(mask_logits, dim=1) # softmax over experts
+        sm_mask = torch.softmax(mask_logits / self.temperature, dim=1) # softmax over experts
         vals, ind = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
         mask = torch.zeros_like(mask_logits)
         mask.scatter_(1, ind, vals)

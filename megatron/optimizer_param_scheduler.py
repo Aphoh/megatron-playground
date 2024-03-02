@@ -227,9 +227,46 @@ class OptimizerParamScheduler(object):
                                                 "weight decay incr style")
             
 
+class DSparseScheduler(OptimizerParamScheduler):
+    def __init__(self, *args, dsp_start_t, dsp_end_t, dsp_start_k, dsp_end_k, dsp_set_fn, **kwargs):
+        super(DSparseScheduler, self).__init__(*args, **kwargs)
+        self.dsp_start_t = dsp_start_t
+        self.dsp_end_t = dsp_end_t
+        self.dsp_start_k = dsp_start_k
+        self.dsp_end_k = dsp_end_k
+        self.dsp_set_fn = dsp_set_fn
+        self.dsp_t = dsp_start_t
+        self.dsp_k = dsp_start_k
 
+    def load_state_dict(self, sd):
+        super(DSparseScheduler, self).load_state_dict(sd)
+        self.dsp_start_t = self._check_and_set(self.dsp_start_t, sd['dsp_start_t'], 'dsp_start_t')
+        self.dsp_end_t = self._check_and_set(self.dsp_end_t, sd['dsp_end_t'], 'dsp_end_t')
+        self.dsp_start_k = self._check_and_set(self.dsp_start_k, sd['dsp_start_k'], 'dsp_start_k')
+        self.dsp_end_k = self._check_and_set(self.dsp_end_k, sd['dsp_end_k'], 'dsp_end_k')
 
+    def state_dict(self):
+        return super(DSparseScheduler, self).state_dict() | {
+            'dsp_start_t': self.dsp_start_t,
+            'dsp_end_t': self.dsp_end_t
+        }
+    
+    def step(self, increment):
+        super(DSparseScheduler, self).step(increment)
 
-
-
+        if self.lr_warmup_steps > 0 and self.num_steps <= self.lr_warmup_steps:
+            self.dsp_k = self.dsp_start_k
+            self.dsp_t = self.dsp_start_t
+        else:
+            num_steps_ = self.num_steps - self.lr_warmup_steps
+            decay_steps_ = self.lr_decay_steps - self.lr_warmup_steps
+            decay_ratio = float(num_steps_) / float(decay_steps_)
+            if self.lr_decay_style == 'linear':
+                coeff = (1.0 - decay_ratio)
+            elif self.lr_decay_style == 'cosine':
+                coeff = 0.5 * (math.cos(math.pi * decay_ratio) + 1.0)
+            self.dsp_t = self.dsp_start_t + coeff * (self.dsp_end_t - self.dsp_start_t)
+            self.dst_k = self.dsp_start_k + coeff * (self.dsp_end_k - self.dsp_start_k)
+            
+        self.dsp_set_fn(self.dsp_t, self.dsp_k)
 

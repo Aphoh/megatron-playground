@@ -555,7 +555,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
     set_checkpoint_version(state_dict.get('checkpoint_version', 0))
 
     # Set iteration.
-    if args.finetune or release or args.dsparse_finetune:
+    if args.finetune or release:
         iteration = 0
     else:
         try:
@@ -586,6 +586,11 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
 
     # Model.
     strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' or args.dsparse_finetune else strict
+    if args.convert_to_pre_layer_norm:
+        print_rank_0('Converting checkpoint to pre-layer norm')
+        assert len(model) == 1
+        for j in range(args.num_layers):
+            state_dict['model'][f'decoder.layers.{j}.pre_mlp_layernorm.weight'] = state_dict['model'].pop(f'decoder.layers.{j}.mlp.linear_fc1.layer_norm_weight')
     if len(model) == 1:
         incompat = model[0].load_state_dict(state_dict['model'], strict=strict)
         print_rank_0(f'loaded model with incompat keys: {incompat}')
