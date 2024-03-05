@@ -44,6 +44,8 @@ def build_tokenizer(args):
     elif args.tokenizer_type == 'NullTokenizer':
         assert args.vocab_size is not None
         tokenizer = _NullTokenizer(args.vocab_size)
+    elif args.tokenizer_type == "HFTokenizer":
+        tokenizer = HFTokenizer(args.vocab_file) 
     else:
         raise NotImplementedError('{} tokenizer is not '
                                   'implemented.'.format(args.tokenizer_type))
@@ -520,3 +522,39 @@ class _NullTokenizer:
     @property
     def additional_special_tokens_ids(self):
         return None
+
+class HFTokenizer:
+    """Designed to Integrate HF's Tokenizer library."""
+
+    def __init__(self, vocab_file):
+        name = "HFTokenizer"
+        super().__init__(name)
+        from tokenizers import Tokenizer
+        self.tokenizer = Tokenizer.from_file(vocab_file)
+        self.eod_id = self.tokenizer.token_to_id("<|endoftext|>")
+        self.pad_id = self.tokenizer.token_to_id("<|padding|>")
+
+    @property
+    def vocab_size(self):
+        return self.tokenizer.get_vocab_size()
+
+    @property
+    def vocab(self):
+        return self.tokenizer.get_vocab()
+
+    @property
+    def inv_vocab(self):
+        return self.tokenizer.decoder
+
+    def tokenize(self, text: str):
+        return self.tokenizer.encode(text).ids
+
+    def tokenize_batch(self, text_batch: Union[List[str], str]):
+        return self.tokenizer.encode_batch(text_batch)
+
+    def detokenize(self, token_ids):
+        return self.tokenizer.decode(token_ids)
+
+    @property
+    def eod(self):
+        return self.eod_id
