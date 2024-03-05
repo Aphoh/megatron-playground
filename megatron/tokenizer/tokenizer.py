@@ -527,8 +527,7 @@ class HFTokenizer:
     """Designed to Integrate HF's Tokenizer library."""
 
     def __init__(self, vocab_file):
-        name = "HFTokenizer"
-        super().__init__(name)
+        super().__init__()
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
         self.eod_id = self.tokenizer.token_to_id("<|endoftext|>")
