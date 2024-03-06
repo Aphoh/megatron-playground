@@ -9,6 +9,7 @@ import numpy as np
 
 import torch
 
+from megatron.checkpoint_utils import convert_pythia, check_mlp_linear_prenorm
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from .global_vars import get_args
@@ -586,11 +587,11 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
 
     # Model.
     strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' or args.dsparse_finetune else strict
-    if args.convert_to_pre_layer_norm:
-        print_rank_0('Converting checkpoint to pre-layer norm')
-        assert len(model) == 1
-        for j in range(args.num_layers):
-            state_dict['model'][f'decoder.layers.{j}.pre_mlp_layernorm.weight'] = state_dict['model'].pop(f'decoder.layers.{j}.mlp.linear_fc1.layer_norm_weight')
+    if args.pythia_load:
+        convert_pythia(state_dict, args)
+
+    check_mlp_linear_prenorm(state_dict)
+    # Check whither we use a pre_mlp_layernorm or it's embedded in the linear layer
     if len(model) == 1:
         incompat = model[0].load_state_dict(state_dict['model'], strict=strict)
         print_rank_0(f'loaded model with incompat keys: {incompat}')

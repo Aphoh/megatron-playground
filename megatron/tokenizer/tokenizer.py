@@ -527,7 +527,6 @@ class HFTokenizer:
     """Designed to Integrate HF's Tokenizer library."""
 
     def __init__(self, vocab_file):
-        super().__init__()
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
         self.eod_id = self.tokenizer.token_to_id("<|endoftext|>")
@@ -548,7 +547,7 @@ class HFTokenizer:
     def tokenize(self, text: str):
         return self.tokenizer.encode(text).ids
 
-    def tokenize_batch(self, text_batch: Union[List[str], str]):
+    def tokenize_batch(self, text_batch):
         return self.tokenizer.encode_batch(text_batch)
 
     def detokenize(self, token_ids):
