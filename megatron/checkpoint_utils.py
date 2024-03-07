@@ -1,8 +1,11 @@
-from utils import print_rank_0
+from .utils import print_rank_0
 
-def convert_pythia(state_dict, args):
-    assert args.untie_embeddings_and_output_weights, "Pythia requires untied embeddings and output weights. Pass --untie-embeddings-and-output-weights"
+def convert_pythia(state_dict: dict):
+    res = {}
     print_rank_0("Converting Pythia checkpoint")
+    
+    max_layer_index = max([int(key.split('.')[2]) for key in state_dict.keys() if key.startswith('gpt_neox.layers.')])
+    num_layers = max_layer_index + 1
     layer_maps = [
         ('gpt_neox.layers.%d.input_layernorm.weight', 'decoder.layers.%d.self_attention.linear_qkv.layer_norm_weight'),
         ('gpt_neox.layers.%d.input_layernorm.bias', 'decoder.layers.%d.self_attention.linear_qkv.layer_norm_bias'),
@@ -23,16 +26,20 @@ def convert_pythia(state_dict, args):
         ('gpt_neox.layers.%d.mlp.dense_4h_to_h.bias', 'decoder.layers.%d.mlp.linear_fc2.bias'),
     ]
     maps = [
-        ('gpt_neox.embed_in_weight', 'embedding.word_embeddings.weight'),
+        ('gpt_neox.embed_in.weight', 'embedding.word_embeddings.weight'),
         ('gpt_neox.final_layer_norm.weight', 'decoder.final_layernorm.weight'),
         ('gpt_neox.final_layer_norm.bias', 'decoder.final_layernorm.bias'),
-        ('gpt_neox.embed_out_weight', 'output_layer.weight'),
+        ('embed_out.weight', 'output_layer.weight'),
     ]
-    for j in range(args.num_layers):
+    for j in range(num_layers):
         for a, b in layer_maps:
-            state_dict['model'][a.format(j)] = state_dict['model'].pop(b.format(j))
+            res[b%j] = state_dict.pop(a%j)
     for a, b in maps:
-        state_dict['model'][a] = state_dict['model'].pop(b)
+        res[b] = state_dict.pop(a)
+    remaining_keys = list(state_dict)
+    if remaining_keys:
+        print_rank_0(f"Unconverted keys: {state_dict.keys()}")
+    return res
 
 
 def check_mlp_linear_prenorm(model, state_dict, args):
