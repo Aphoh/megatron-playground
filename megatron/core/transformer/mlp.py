@@ -221,6 +221,7 @@ class MLPDShard(MLP):
         self.experts_per_token = self.config.dsparse_nblocks // self.config.dsparse_factor
         self.temperature = 1
         self.expert_width = self.config.ffn_hidden_size // self.config.dsparse_nblocks
+        self.normalize_mask = self.config.dsparse_normalize_mask
         print(f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}")
 
     def forward(self, hidden_states):
@@ -253,10 +254,13 @@ class MLPDShard(MLP):
         mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)
         s, b, nblocks = mask_logits.shape
         mask_logits = mask_logits.view(s*b, nblocks) # [s*b, nblocks]
-        print("experts_per_token", self.experts_per_token, "temperature", self.temperature)
 
         sm_mask = torch.softmax(mask_logits / self.temperature, dim=1) # softmax over experts
-        # sm_mask = sm_mask / sm_mask.mean(dim=0) TODO: config this when annealing
+        # TODO: we do this so that we approximate the normal model, but should I 
+        # slowly temperature this out?
+        if self.normalize_mask: # TODO should I try this after topk?
+            sm_mask = sm_mask / sm_mask.mean(dim=0) 
+
         vals, ind = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
         mask = torch.zeros_like(mask_logits)
         mask.scatter_(1, ind, vals)

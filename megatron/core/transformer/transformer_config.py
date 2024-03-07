@@ -67,6 +67,7 @@ class TransformerConfig(ModelParallelConfig):
             moe_token_dropping (bool): This feature involves selectively dropping and padding tokens for each expert to achieve a specified capacity, similar to GShard, Switch-Transformer, and DeepSpeed-MoE. Note: Currently unsupported.
             dsparse_factor (int or None): If not None, use 1/dsparse_factor sparsity in the mlp layers. Defaults to None.
             dsparse_nblocks (int or None): If None and dsparse_factor is set, uses ffn_hidden_size blocks. Defaults to None.
+            dsparse_normalize_mask (bool): If true, normalizes the dsparse mask to have unit mean per token
     """
 
     # model architecture
@@ -142,6 +143,7 @@ class TransformerConfig(ModelParallelConfig):
 
     dsparse_factor: int = None
     dsparse_nblocks: int = None
+    dsparse_normalize_mask: bool = False
 
     def __post_init__(self):
         """ Python dataclass method that is used to modify attributes after initialization.
