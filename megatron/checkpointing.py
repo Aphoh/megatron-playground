@@ -176,6 +176,7 @@ def read_metadata(tracker_filename):
     # Read the tracker file and either set the iteration or
     # mark it as a release checkpoint.
     iteration = 0
+    args = get_args()
     release = False
     with open(tracker_filename, 'r') as f:
         metastring = f.read().strip()
@@ -187,7 +188,7 @@ def read_metadata(tracker_filename):
                 print_rank_0('ERROR: Invalid metadata file {}. Exiting'.format(
                     tracker_filename))
                 sys.exit()
-    assert iteration > 0 or release, 'error parsing metadata file {}'.format(
+    assert iteration > 0 or release or args.finetune, 'error parsing metadata file {}'.format(
         tracker_filename)
 
     # Get the max iteration retrieved across the ranks.
@@ -587,10 +588,8 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
 
     # Model.
     strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' or args.dsparse_finetune else strict
-    if args.pythia_load:
-        convert_pythia(state_dict, args)
 
-    check_mlp_linear_prenorm(state_dict)
+    check_mlp_linear_prenorm(model, state_dict, args)
     # Check whither we use a pre_mlp_layernorm or it's embedded in the linear layer
     if len(model) == 1:
         incompat = model[0].load_state_dict(state_dict['model'], strict=strict)

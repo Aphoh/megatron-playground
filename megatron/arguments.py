@@ -422,6 +422,8 @@ def validate_args(args, defaults={}):
             raise RuntimeError('--dsparse-factor only supported with local transformer implementation.')
         if args.dsparse_factor <= 0:
             raise RuntimeError('--dsparse-factor must be greater than 0.')
+        if args.dsparse_anneal and args.dsparse_start_t is None:
+            raise RuntimeError("--dsparse-start-t must be set if --dsparse-anneal is set.")
 
     # Print arguments.
     _print_args("arguments", args)
@@ -1489,6 +1491,5 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
     group.add_argument("--dsparse-start-t", type=int, default=None, help="DSparsity start_t for the model")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
-    group.add_argument("--pythia-load", action="store_true", help="Load Pythia Checkpoint")
 
     return parser

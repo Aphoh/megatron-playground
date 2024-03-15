@@ -43,13 +43,12 @@ def convert_pythia(state_dict: dict):
 
 
 def check_mlp_linear_prenorm(model, state_dict, args):
-    model_lin_ln = any('mlp.linear_fc1.layer_norm_weight' in k for k in model.state_dict().keys())
+    model_lin_ln = any('mlp.linear_fc1.layer_norm_weight' in k for k in model[0].state_dict().keys())
     ckpnt_lin_ln = any('mlp.linear_fc1.layer_norm_weight' in k for k in state_dict['model'].keys())
     has_bias = any('mlp.linear_fc1.layer_norm_bias' in k or 'pre_mlp_layernorm.bias' for k in state_dict['model'].keys())
     # Swap them in the correct direction if they're not the same
     if model_lin_ln != ckpnt_lin_ln:
         print_rank_0(f'Converting checkpoint {"to" if model_lin_ln else "from"} pre-layer norm')
-        assert len(model) == 1
         for j in range(args.num_layers):
             for k in (['weight', 'bias'] if has_bias else ['weight']):
                 lin_ln_key = 'decoder.layers.%d.mlp.linear_fc1.layer_norm_%s' % (j, k)

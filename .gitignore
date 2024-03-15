@@ -8,3 +8,4 @@ slurm*
 logs
 .vscode
 venv
+wandb

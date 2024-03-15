@@ -302,6 +302,7 @@ class Attention(MegatronModule, ABC):
                 packed_seq_params=packed_seq_params,
             )
         else:
+            # qkv need to be in sbhd
             core_attn_out = self.core_attention(
                 query,
                 key,
@@ -367,6 +368,9 @@ class SelfAttention(Attention):
         Derives `query`, `key` and `value` tensors from `hidden_states`.
         """
         # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn)]
+        # sbh -> sbhd
+        # neox is
+        # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
         mixed_qkv, _ = self.linear_qkv(hidden_states)
 
         # [sq, b, hp] --> [sq, b, ng, (np/ng + 2) * hn]

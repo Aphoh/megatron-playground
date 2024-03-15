@@ -523,10 +523,11 @@ class _NullTokenizer:
     def additional_special_tokens_ids(self):
         return None
 
-class HFTokenizer:
+class HFTokenizer(MegatronTokenizer):
     """Designed to Integrate HF's Tokenizer library."""
 
     def __init__(self, vocab_file):
+        super().__init__(vocab_file)
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
         self.eod_id = self.tokenizer.token_to_id("<|endoftext|>")
