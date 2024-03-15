@@ -62,10 +62,13 @@ def print_datetime(string):
 
 
 def num_floating_point_operations(args, batch_size):
+    # Group Query Attention.
     if not args.group_query_attention:
         args.num_query_groups = args.num_attention_heads
+    # MoE.
+    num_experts_routed_to = 1 if args.num_experts is None else args.moe_router_topk
     return (
-        60
+        12
         * batch_size
         * args.seq_length
         * args.num_layers
@@ -73,9 +76,10 @@ def num_floating_point_operations(args, batch_size):
         * args.hidden_size
         * (
             1
-            + (args.num_query_groups / (5 * args.num_attention_heads))
-            + (args.seq_length / (5 * args.hidden_size))
-            + (args.padded_vocab_size / (10 * args.num_layers * args.hidden_size))
+            + ((args.ffn_hidden_size / args.hidden_size) * num_experts_routed_to)
+            + (args.num_query_groups / args.num_attention_heads)
+            + (args.seq_length / args.hidden_size)
+            + (args.padded_vocab_size / (2 * args.num_layers * args.hidden_size))
         )
     )
 
@@ -264,7 +268,7 @@ def pretrain(train_valid_test_dataset_provider,
 
         print_datetime('after training is done')
 
-        if args.save and iteration != 0:
+        if args.save and iteration != 0 and iteration % args.save_interval != 0:
             save_checkpoint(iteration, model, optimizer, opt_param_scheduler,
                             num_floating_point_operations_so_far)
     else:
@@ -408,12 +412,14 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
         model = [DDP(config,
                      model_chunk,
                      data_parallel_group=mpu.get_data_parallel_group(with_context_parallel=True),
+                     expert_data_parallel_group=mpu.get_data_modulo_expert_parallel_group(),
                      accumulate_allreduce_grads_in_fp32=args.accumulate_allreduce_grads_in_fp32,
                      overlap_grad_reduce=args.overlap_grad_reduce,
                      use_distributed_optimizer=args.use_distributed_optimizer,
                      # Turn off bucketing for model_chunk 2 onwards, since communication for these
                      # model chunks is overlapped with compute anyway.
-                     disable_bucketing=(model_chunk_idx > 0))
+                     disable_bucketing=(model_chunk_idx > 0),
+                     check_for_nan_in_grad=args.check_for_nan_in_loss_and_grad)
                  for (model_chunk_idx, model_chunk) in enumerate(model)]
 
         # Broadcast params from data parallel src rank to other data parallel ranks.
@@ -569,7 +575,7 @@ def train_step(forward_step_func, data_iterator,
         torch.cuda.empty_cache()
 
     # Vision gradients.
-    if args.vision_pretraining and args.vision_pretraining_type == "dino":
+    if getattr(args, 'vision_pretraining', False) and args.vision_pretraining_type == "dino":
         unwrapped_model = unwrap_model(model[0])
         unwrapped_model.cancel_gradients_last_layer(args.curr_iteration)
 
@@ -579,7 +585,7 @@ def train_step(forward_step_func, data_iterator,
     timers('optimizer').stop()
 
     # Vision momentum.
-    if args.vision_pretraining and args.vision_pretraining_type == "dino":
+    if getattr(args, 'vision_pretraining', False) and args.vision_pretraining_type == "dino":
         unwrapped_model = unwrap_model(model[0])
         unwrapped_model.update_momentum(args.curr_iteration)
 
