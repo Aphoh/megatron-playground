@@ -277,10 +277,16 @@ class Attention(MegatronModule, ABC):
             else:
                 cu_seqlens_q = cu_seqlens_kv = None
             query = apply_rotary_pos_emb(
-                query, q_pos_emb, config=self.config, cu_seqlens=cu_seqlens_q,
+                query,
+                q_pos_emb,
+                config=self.config,
+                cu_seqlens=cu_seqlens_q,
             )
             key = apply_rotary_pos_emb(
-                key, k_pos_emb, config=self.config, cu_seqlens=cu_seqlens_kv,
+                key,
+                k_pos_emb,
+                config=self.config,
+                cu_seqlens=cu_seqlens_kv,
             )
 
             # TODO, can apply positional embedding to value_layer so it has
@@ -288,6 +294,10 @@ class Attention(MegatronModule, ABC):
             # otherwise, only relative positional embedding takes effect
             # value_layer = apply_rotary_pos_emb(value_layer, k_pos_emb)
 
+        from megatron.core.models.gpt.gpt_model import global_buffers
+
+        if "layer.1.attn_post_rotary_qkv" not in global_buffers:
+            global_buffers["layer.1.attn_post_rotary_qkv"] = (query, key, value)
         # ==================================
         # core attention computation
         # ==================================
@@ -311,6 +321,9 @@ class Attention(MegatronModule, ABC):
                 attn_mask_type=attn_mask_type,
                 packed_seq_params=packed_seq_params,
             )
+
+        if "layer.1.post_core_attn" not in global_buffers:
+            global_buffers["layer.1.post_core_attn"] = core_attn_out
 
         if packed_seq_params is not None:
             # reshape to same output shape as unpacked case
@@ -369,9 +382,12 @@ class SelfAttention(Attention):
         """
         # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn)]
         # sbh -> sbhd
-        # neox is
-        # Attention heads [sq, b, h] --> [sq, b, (np * 3 * hn)]
         mixed_qkv, _ = self.linear_qkv(hidden_states)
+
+        from megatron.core.models.gpt.gpt_model import global_buffers
+
+        if "layer.1.attn_qkv_output" not in global_buffers:
+            global_buffers["layer.1.attn_qkv_output"] = mixed_qkv
 
         # [sq, b, hp] --> [sq, b, ng, (np/ng + 2) * hn]
         new_tensor_shape = mixed_qkv.size()[:-1] + (
@@ -396,11 +412,19 @@ class SelfAttention(Attention):
         if SplitAlongDim is not None:
 
             # [sq, b, ng, (np/ng + 2) * hn] --> [sq, b, ng, np/ng * hn], [sq, b, ng, hn], [sq, b, ng, hn]
-            (query, key, value) = SplitAlongDim(mixed_qkv, 3, split_arg_list,)
+            (query, key, value) = SplitAlongDim(
+                mixed_qkv,
+                3,
+                split_arg_list,
+            )
         else:
 
             # [sq, b, ng, (np/ng + 2) * hn] --> [sq, b, ng, np/ng * hn], [sq, b, ng, hn], [sq, b, ng, hn]
-            (query, key, value) = torch.split(mixed_qkv, split_arg_list, dim=3,)
+            (query, key, value) = torch.split(
+                mixed_qkv,
+                split_arg_list,
+                dim=3,
+            )
 
         # [sq, b, ng, np/ng * hn] -> [sq, b, np, hn]
         query = query.reshape(query.size(0), query.size(1), -1, self.hidden_size_per_attention_head)

@@ -18,6 +18,8 @@ from megatron.core.transformer.transformer_block import TransformerBlock
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import make_tp_sharded_tensor_for_checkpoint
 
+global_buffers = {}
+
 
 class GPTModel(LanguageModule):
     """GPT Transformer language model.
@@ -162,6 +164,7 @@ class GPTModel(LanguageModule):
             # decoder will get hidden_states from encoder.input_tensor
             decoder_input = None
 
+        global_buffers['decoder_input'] = decoder_input
         # Rotary positional embeddings (embedding is None for PP intermediate devices)
         rotary_pos_emb = None
         if self.position_embedding_type == 'rope':
@@ -170,6 +173,7 @@ class GPTModel(LanguageModule):
             )
             rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
 
+        global_buffers['rotary_pos_emb'] = rotary_pos_emb
         # Run decoder.
         hidden_states = self.decoder(
             hidden_states=decoder_input,
@@ -179,6 +183,7 @@ class GPTModel(LanguageModule):
             packed_seq_params=packed_seq_params,
             **(extra_block_kwargs or {}),
         )
+        global_buffers['hidden_states'] = hidden_states
 
         if not self.post_process:
             return hidden_states
@@ -243,7 +248,9 @@ class GPTModel(LanguageModule):
                 output_layer_tensor = output_layer_state_dict[output_layer_key]
                 # independent output layer
                 sharded_output_layer_tensor = make_tp_sharded_tensor_for_checkpoint(
-                    tensor=output_layer_tensor, key=output_layer_key, allow_shape_mismatch=True,
+                    tensor=output_layer_tensor,
+                    key=output_layer_key,
+                    allow_shape_mismatch=True,
                 )
 
                 sharded_state_dict[output_layer_key] = sharded_output_layer_tensor

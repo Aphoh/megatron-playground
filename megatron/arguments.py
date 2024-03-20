@@ -1328,7 +1328,8 @@ def _add_data_args(parser):
                                 'SentencePieceTokenizer',
                                 'GPTSentencePieceTokenizer',
                                 'Llama2Tokenizer',
-                                'NullTokenizer'],
+                                'NullTokenizer',
+                                'HFTokenizer'],
                        help='What type of tokenizer to use.')
     group.add_argument('--tokenizer-model', type=str, default=None,
                        help='Sentencepiece tokenizer model.')
@@ -1520,6 +1521,7 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
     group.add_argument("--dsparse-start-t", type=int, default=None, help="DSparsity start_t for the model")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
+    group.add_argument("--use-parallel-residual", action="store_true", help="Use parallel residual like in PaLM and Pythia")
     group.add_argument('--yaml-cfg', type=str, default=None, 
                        help = 'Config file to add additional arguments')
 

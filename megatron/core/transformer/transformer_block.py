@@ -170,7 +170,10 @@ class TransformerBlock(MegatronModule):
 
         if self.post_process and self.post_layer_norm:
             # Final layer norm before output.
-            self.final_layernorm = TENorm(
+            from megatron.global_vars import get_args
+            args = get_args()
+            NormClass = TENorm if args.transformer_impl == 'transformer_engine' else FusedLayerNorm
+            self.final_layernorm = NormClass(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
                 eps=self.config.layernorm_epsilon,

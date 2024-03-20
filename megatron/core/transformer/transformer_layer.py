@@ -36,7 +36,7 @@ class TransformerLayerSubmodules:
 
 
 class BaseTransformerLayer(ABC):
-    """ A common parent class for `TransformerLayer` like implementations.
+    """A common parent class for `TransformerLayer` like implementations.
 
     A dummy class that is subclassed by similar `TransformerLayer`s e.g. the
     `TransformerLayer` in this file and possibly other `TransformerLayer`
@@ -82,7 +82,9 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         ## [Module 2: SelfAttention]
         self.self_attention = build_module(
-            submodules.self_attention, config=self.config, layer_number=layer_number,
+            submodules.self_attention,
+            config=self.config,
+            layer_number=layer_number,
         )
 
         ## [Module 3: BiasDropoutFusion]
@@ -98,11 +100,16 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         ## [Module 5: CrossAttention]
         self.cross_attention = build_module(
-            submodules.cross_attention, config=self.config, layer_number=layer_number,
+            submodules.cross_attention,
+            config=self.config,
+            layer_number=layer_number,
         )
 
         ## [Module 6: BiasDropoutFusion]
-        self.cross_attn_bda = build_module(submodules.cross_attn_bda, config=self.config,)
+        self.cross_attn_bda = build_module(
+            submodules.cross_attn_bda,
+            config=self.config,
+        )
 
         ## [Module 7: Pre MLP] Optional Layernorm before MLP
         self.pre_mlp_layernorm = build_module(
@@ -166,11 +173,18 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
     ):
         # hidden_states: [s, b, h]
 
+        from megatron.core.models.gpt.gpt_model import global_buffers
+
         # Residual connection.
         residual = hidden_states
+        if self.config.use_parallel_residual:
+            initial_input = hidden_states
 
         # Optional Input Layer norm
         input_layernorm_output = self.input_layernorm(hidden_states)
+        global_buffers[f"layer.{self.layer_number}.input_layernorm_output"] = (
+            input_layernorm_output.clone().detach()
+        )
 
         # Self attention.
         attention_output_with_bias = self.self_attention(
@@ -187,6 +201,8 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             hidden_states = self.self_attn_bda(self.training, self.config.bias_dropout_fusion)(
                 attention_output_with_bias, residual, self.hidden_dropout
             )
+
+        global_buffers[f"layer.{self.layer_number}.post_self_attn"] = hidden_states.clone().detach()
 
         # Residual connection.
         residual = hidden_states
@@ -215,8 +231,13 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # Residual connection.
         residual = hidden_states
 
+        mlp_input = hidden_states if not self.config.use_parallel_residual else initial_input
         # Optional Layer norm post the cross-attention.
-        pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
+        pre_mlp_layernorm_output = self.pre_mlp_layernorm(mlp_input)
+
+        global_buffers[f"layer.{self.layer_number}.post_pre_mlp_layernorm"] = (
+            hidden_states.clone().detach()
+        )
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
@@ -227,6 +248,8 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
             hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
                 mlp_output_with_bias, residual, self.hidden_dropout
             )
+
+        global_buffers[f"layer.{self.layer_number}.post_mlp"] = hidden_states.clone().detach()
 
         # Jit compiled function creates 'view' tensor. This tensor
         # potentially gets saved in the MPU checkpoint function context,
