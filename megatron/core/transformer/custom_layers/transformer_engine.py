@@ -487,7 +487,7 @@ try:
                 return core_attn_out.transpose(0, 1)
             else:
                 return core_attn_out
-except ImportError:
+except AttributeError:
     print("Unable to import TEDotProductAttention from transformer-engine. Using DotProductAttention.")
     from megatron.core.transformer.dot_product_attention import DotProductAttention
     TEDotProductAttention = DotProductAttention
