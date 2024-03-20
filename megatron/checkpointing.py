@@ -9,7 +9,7 @@ import numpy as np
 
 import torch
 
-from megatron.checkpoint_utils import convert_pythia, check_mlp_linear_prenorm
+from megatron.checkpoint_utils import convert_linear_prenorms
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel, dist_checkpointing
 from .core.dist_checkpointing.mapping import ShardedObject
@@ -673,7 +673,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
     # Model.
     strict = False if args.retro_add_retriever or args.transformer_impl == 'transformer_engine' or args.dsparse_finetune else strict
 
-    check_mlp_linear_prenorm(model, state_dict, args)
+    convert_linear_prenorms(model, state_dict, args)
     # Check whither we use a pre_mlp_layernorm or it's embedded in the linear layer
     if len(model) == 1:
         incompat = model[0].load_state_dict(state_dict['model'], strict=strict)

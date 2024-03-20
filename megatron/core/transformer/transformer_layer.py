@@ -168,6 +168,8 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         # Residual connection.
         residual = hidden_states
+        if self.config.use_parallel_residual:
+            initial_input = hidden_states
 
         # Optional Input Layer norm
         input_layernorm_output = self.input_layernorm(hidden_states)
@@ -214,9 +216,9 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         # Residual connection.
         residual = hidden_states
-
+        mlp_input = hidden_states if not self.config.use_parallel_residual else initial_input
         # Optional Layer norm post the cross-attention.
-        pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
+        pre_mlp_layernorm_output = self.pre_mlp_layernorm(mlp_input)
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)

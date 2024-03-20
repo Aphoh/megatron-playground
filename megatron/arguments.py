@@ -438,6 +438,9 @@ def validate_args(args, defaults={}):
             raise RuntimeError('--dsparse-factor must be greater than 0.')
         if args.dsparse_anneal and args.dsparse_start_t is None:
             raise RuntimeError("--dsparse-start-t must be set if --dsparse-anneal is set.")
+        
+    if args.use_parallel_residual and not args.use_mcore_models:
+        raise RuntimeError('--use-parallel-residual only supported with Megatron Core, please add --use-mcore-models.')
 
     # Distributed checkpointing checks
     if args.use_dist_ckpt and not args.use_mcore_models:
@@ -1328,7 +1331,8 @@ def _add_data_args(parser):
                                 'SentencePieceTokenizer',
                                 'GPTSentencePieceTokenizer',
                                 'Llama2Tokenizer',
-                                'NullTokenizer'],
+                                'NullTokenizer',
+                                'HFTokenizer'],
                        help='What type of tokenizer to use.')
     group.add_argument('--tokenizer-model', type=str, default=None,
                        help='Sentencepiece tokenizer model.')
@@ -1520,6 +1524,7 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
     group.add_argument("--dsparse-start-t", type=int, default=None, help="DSparsity start_t for the model")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
+    group.add_argument("--use-parallel-residual", action="store_true", help="Use parallel residual like in PaLM and Pythia")
     group.add_argument('--yaml-cfg', type=str, default=None, 
                        help = 'Config file to add additional arguments')
 
