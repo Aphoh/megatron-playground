@@ -81,7 +81,7 @@ def get_memory_usage(model_size: int) -> int:
     return model_size * (4 + 2 + 2 + 2)
 
 
-def download_pythia(args) -> Path:
+def download_pythia(args: Arguments) -> Path:
     pythia_ckpt_dir = Path(args.checkpoint_dir) / "pythia" / args.load_pythia
     lock_file = Path(args.checkpoint_dir) / "pythia.lock"
     with FileLock(lock_file):
@@ -126,73 +126,73 @@ def arg_dict_to_list(args: dict) -> List[str]:
 
 
 def get_checkpoint_load_arguments(args: Arguments) -> dict:
-    args = {"save": Path(args.checkpoint_dir) / args.name}
+    res = {"save": Path(args.checkpoint_dir) / args.name}
     if args.load_pythia:
         repo = pythia_repo(args)
         print_rank_0(f"Downloading pythia checkpoint from {repo}")
         ckpt_loc = download_pythia(args)
-        args["load"] = ckpt_loc
-    return args
+        res["load"] = ckpt_loc
+    return res
 
 
 def get_model_arch_arguments(args: Arguments) -> dict:
-    args = {"use_mcore_models": ()}
-    if args.load_pythia:
+    res = {"use_mcore_models": ()}
+    if res.load_pythia:
         repo = pythia_repo(args)
         print_rank_0(f"Loading Pythia config from {repo}")
         pythia_config = GPTNeoXConfig.from_pretrained(repo, cache_dir=args.hf_cache_dir)
         # Arguments from the config
-        args["hidden_size"] = pythia_config.hidden_size
-        args["init_method_std"] = pythia_config.initializer_range
-        args["ffn_hidden_size"] = pythia_config.intermediate_size
-        args["norm_epsilon"] = pythia_config.layer_norm_eps
-        args["max_position_embeddings"] = pythia_config.max_position_embeddings
-        args["num_attention_heads"] = pythia_config.num_attention_heads
-        args["num_layers"] = pythia_config.num_hidden_layers
-        args["rotary_percent"] = pythia_config.rotary_pct
+        res["hidden_size"] = pythia_config.hidden_size
+        res["init_method_std"] = pythia_config.initializer_range
+        res["ffn_hidden_size"] = pythia_config.intermediate_size
+        res["norm_epsilon"] = pythia_config.layer_norm_eps
+        res["max_position_embeddings"] = pythia_config.max_position_embeddings
+        res["num_attention_heads"] = pythia_config.num_attention_heads
+        res["num_layers"] = pythia_config.num_hidden_layers
+        res["rotary_percent"] = pythia_config.rotary_pct
         if not pythia_config.tie_word_embeddings:
-            args["untie_embeddings_and_output_weights"] = ()
+            res["untie_embeddings_and_output_weights"] = ()
 
-        args["use_parallel_residual"] = pythia_config.use_parallel_residual
-        args["tokenizer"] = pythia_config.vocab_size
+        res["use_parallel_residual"] = pythia_config.use_parallel_residual
+        res["tokenizer"] = pythia_config.vocab_size
 
         # static arguments
-        args["position_embedding_type"] = "rope"
-        args["normalization"] = "LayerNorm"
+        res["position_embedding_type"] = "rope"
+        res["normalization"] = "LayerNorm"
 
         # download tokenizer
         tokenizer_path = hf_hub_download(repo, "tokenizer.json", cache_dir=args.hf_cache_dir)
-        args["vocab_file"] = tokenizer_path
-        args["tokenizer_type"] = "HFTokenizer"
-        args["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
-        args["attention_dropout"] = 0.0
-        args["hidden_dropout"] = 0.0
-        args["weight_decay"] = 0.01
-        args["seq_length"] = 2048
+        res["vocab_file"] = tokenizer_path
+        res["tokenizer_type"] = "HFTokenizer"
+        res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
+        res["attention_dropout"] = 0.0
+        res["hidden_dropout"] = 0.0
+        res["weight_decay"] = 0.01
+        res["seq_length"] = 2048
 
-    return args
+    return res
 
 
 def get_training_arguments(args: Arguments) -> dict:
-    args = {"lr": args.learning_rate, "bf16": ()}
-    if args.load_pythia:
-        args["adam_beta1"] = 0.9
-        args["adam_beta2"] = 0.95
-        args["adam_epsilon"] = 1e-8
-        args["global_batch_size"] = 1024
-        args["finetune"] = ()
+    res = {"lr": args.learning_rate, "bf16": ()}
+    if res.load_pythia:
+        res["adam_beta1"] = 0.9
+        res["adam_beta2"] = 0.95
+        res["adam_epsilon"] = 1e-8
+        res["global_batch_size"] = 1024
+        res["finetune"] = ()
 
-    args["train_iters"] = args.steps
-    args["lr_decay_iters"] = args.steps
-    args["lr_warmup_fraction"] = 0.01
-    args["lr_decay_style"] = "cosine"
-    args["min_lr"] = args.learning_rate * 0.1
+    res["train_iters"] = args.steps
+    res["lr_decay_iters"] = args.steps
+    res["lr_warmup_fraction"] = 0.01
+    res["lr_decay_style"] = "cosine"
+    res["min_lr"] = args.learning_rate * 0.1
 
-    return args
+    return res
 
 
 def get_logging_arguments(args: Arguments) -> dict:
-    args = {
+    res = {
         "log_throughput": (),
         "log_timers_to_tensorboard": (),
         "log_validation_ppl_to_tensorboard": (),
@@ -203,16 +203,16 @@ def get_logging_arguments(args: Arguments) -> dict:
         "wandb_project": args.wandb_project,
         "wandb_exp_name": args.name,
     }
-    return args
+    return res
 
 
 def get_torchrun_args(args: Arguments) -> dict:
-    args = {}
+    res = {}
     if is_slurm:
-        args["nnodes"] = int(os.environ["SLURM_STEP_NUM_NODES"])
-        args["nproc_per_node"] = os.environ["SLURM_GPUS_ON_NODE"]
-        if args["nnodes"] == 1:
-            args["standalone"] = ()
+        res["nnodes"] = int(os.environ["SLURM_STEP_NUM_NODES"])
+        res["nproc_per_node"] = os.environ["SLURM_GPUS_ON_NODE"]
+        if res["nnodes"] == 1:
+            res["standalone"] = ()
         else:
             nodelist = os.environ["SLURM_JOB_NODELIST"]
             hostnames = subprocess.run(
@@ -227,14 +227,14 @@ def get_torchrun_args(args: Arguments) -> dict:
                 print(f"Head node IP: {head_node_ip}")
             except socket.gaierror:
                 raise RuntimeError("Could not resolve the head node's IP address.")
-            args["rdzv_id"] = os.environ["RANDOM"]
-            args["rdzv_endpoint"] = f"{head_node_ip}:29500"
-            args["rdzv_backend"] = "c10d"
+            res["rdzv_id"] = os.environ["RANDOM"]
+            res["rdzv_endpoint"] = f"{head_node_ip}:29500"
+            res["rdzv_backend"] = "c10d"
     else:
-        args["nnodes"] = 1
-        args["standalone"] = ()
-        args["nproc_per_node"] = torch.cuda.device_count()
-    return args
+        res["nnodes"] = 1
+        res["standalone"] = ()
+        res["nproc_per_node"] = torch.cuda.device_count()
+    return res
 
 
 def main():
@@ -247,9 +247,6 @@ def main():
         | get_logging_arguments(args)
     )
     torchrun_args = get_torchrun_args(args)
-
-    os.makedirs(args.tensorboard_dir, exist_ok=True)
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     if "micro_batch_size" not in train_args:
         model_size = get_model_size(train_args)
