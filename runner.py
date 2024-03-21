@@ -16,8 +16,7 @@ import math
 @dataclass
 class Arguments:
     name: str
-    load_pythia: bool = False
-    pythia_version: Optional[str] = None
+    load_pythia: Optional[str] = None
     data_dir: str = "/data"
     ckpt_dir: str = "/checkpoint"
     hf_cache_dir: str = "/hf_cache"
@@ -39,9 +38,8 @@ def print_rank_0(*args, **kwargs):
 def parse_args() -> Arguments:
     parser = argparse.ArgumentParser(description='Run a variety of different training tasks')
     parser.add_argument("--name", type=str, help="Name of the run")
-    parser.add_argument('--load-pythia', type=bool, default=False, help='Whether to load pythia')
     parser.add_argument(
-        '--pythia-version', type=str, default=None, help='Pythia model version to load'
+        '--load-pythia', type=str, default=None, help='Pythia model version to load'
     )
     parser.add_argument('--data-dir', type=str, default="/data", help='Location to load data')
     parser.add_argument(
@@ -84,7 +82,7 @@ def get_memory_usage(model_size: int) -> int:
 
 
 def download_pythia(args) -> Path:
-    pythia_ckpt_dir = Path(args.ckpt_dir) / "pythia" / args.pythia_version
+    pythia_ckpt_dir = Path(args.ckpt_dir) / "pythia" / args.load_pythia
     lock_file = Path(args.ckpt_dir) / "pythia.lock"
     with FileLock(lock_file):
         if not pythia_ckpt_dir.exists():
@@ -113,7 +111,7 @@ def download_pythia(args) -> Path:
 
 
 def pythia_repo(args: Arguments) -> str:
-    return f"EleutherAI/pythia-{args.pythia_version}"
+    return f"EleutherAI/pythia-{args.load_pythia}"
 
 
 def arg_dict_to_list(args: dict) -> List[str]:
@@ -140,14 +138,9 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
 def get_model_arch_arguments(args: Arguments) -> dict:
     args = {"use_mcore_models": ()}
     if args.load_pythia:
-        assert (
-            args.pythia_version is not None
-        ), 'Pythia version must be specified when loading pythia'
-        repo = f'EleutherAI/pythia-{args.pythia_version}'
+        repo = pythia_repo(args)
         print_rank_0(f"Loading Pythia config from {repo}")
-        pythia_config = GPTNeoXConfig.from_pretrained(
-            f'ElutherAI/pythia-{args.pythia_version}', cache_dir=args.hf_cache_dir
-        )
+        pythia_config = GPTNeoXConfig.from_pretrained(repo, cache_dir=args.hf_cache_dir)
         # Arguments from the config
         args["hidden_size"] = pythia_config.hidden_size
         args["init_method_std"] = pythia_config.initializer_range
