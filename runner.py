@@ -24,6 +24,7 @@ class Arguments:
     learning_rate: float = 6e-4
     tensorboard_dir: str = "/tensorboard"
     wandb_project: str = "megatron-dsparse"
+    steps: int = 1000
 
 
 rank = int(os.environ.get("SLURM_PROCID", "0"))
@@ -59,6 +60,7 @@ def parse_args() -> Arguments:
     parser.add_argument(
         "--wandb-project", type=str, default="megatron-dsparse", help="Wandb project"
     )
+    parser.add_argument("--steps", type=int, default=1000, help="Number of steps to run")
     args = parser.parse_args()
     return Arguments(**vars(args))
 
@@ -126,7 +128,7 @@ def arg_dict_to_list(args: dict) -> List[str]:
 
 
 def get_checkpoint_load_arguments(args: Arguments) -> dict:
-    args = {}
+    args = {"save": Path(args.ckpt_dir) / args.name}
     if args.load_pythia:
         repo = pythia_repo(args)
         print_rank_0(f"Downloading pythia checkpoint from {repo}")
@@ -179,12 +181,19 @@ def get_model_arch_arguments(args: Arguments) -> dict:
 
 
 def get_training_arguments(args: Arguments) -> dict:
-    args = {"learning_rate": args.learning_rate, "bf16": ()}
+    args = {"lr": args.learning_rate, "bf16": ()}
     if args.load_pythia:
         args["adam_beta1"] = 0.9
         args["adam_beta2"] = 0.95
         args["adam_epsilon"] = 1e-8
         args["global_batch_size"] = 1024
+        args["finetune"] = ()
+
+    args["train_iters"] = args.steps
+    args["lr_decay_iters"] = args.steps
+    args["lr_warmup_fraction"] = 0.01
+    args["lr_decay_style"] = "cosine"
+    args["min_lr"] = args.learning_rate * 0.1
 
     return args
 
@@ -197,7 +206,7 @@ def get_logging_arguments(args: Arguments) -> dict:
         "log_interval": 10,
         "save_interval": 1000,
         "eval_interval": 100,
-        "tensorboard_dir": args.tensorboard_dir,
+        "tensorboard_dir": Path(args.tensorboard_dir) / args.name,
         "wandb_project": args.wandb_project,
         "wandb_exp_name": args.name,
     }
