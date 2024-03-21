@@ -18,9 +18,9 @@ class Arguments:
     name: str
     load_pythia: Optional[str] = None
     data_dir: str = "/data"
-    ckpt_dir: str = "/checkpoint"
     hf_cache_dir: str = "/hf_cache"
     learning_rate: float = 6e-4
+    checkpoint_dir: str = "/checkpoint"
     tensorboard_dir: str = "/tensorboard"
     wandb_project: str = "megatron-dsparse"
     steps: int = 1000
@@ -82,8 +82,8 @@ def get_memory_usage(model_size: int) -> int:
 
 
 def download_pythia(args) -> Path:
-    pythia_ckpt_dir = Path(args.ckpt_dir) / "pythia" / args.load_pythia
-    lock_file = Path(args.ckpt_dir) / "pythia.lock"
+    pythia_ckpt_dir = Path(args.checkpoint_dir) / "pythia" / args.load_pythia
+    lock_file = Path(args.checkpoint_dir) / "pythia.lock"
     with FileLock(lock_file):
         if not pythia_ckpt_dir.exists():
             # We're the first to get here, download the model
@@ -126,7 +126,7 @@ def arg_dict_to_list(args: dict) -> List[str]:
 
 
 def get_checkpoint_load_arguments(args: Arguments) -> dict:
-    args = {"save": Path(args.ckpt_dir) / args.name}
+    args = {"save": Path(args.checkpoint_dir) / args.name}
     if args.load_pythia:
         repo = pythia_repo(args)
         print_rank_0(f"Downloading pythia checkpoint from {repo}")
@@ -249,7 +249,7 @@ def main():
     torchrun_args = get_torchrun_args(args)
 
     os.makedirs(args.tensorboard_dir, exist_ok=True)
-    os.makedirs(args.ckpt_dir, exist_ok=True)
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     if "micro_batch_size" not in train_args:
         model_size = get_model_size(train_args)
