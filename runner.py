@@ -20,6 +20,7 @@ class Arguments:
     data_dir: str = "/data"
     hf_cache_dir: str = "/hf_cache"
     learning_rate: float = 6e-4
+    lr_warmup_fraction: float = 0.01
     checkpoint_dir: str = "/checkpoint"
     tensorboard_dir: str = "/tensorboard"
     wandb_project: str = "megatron-dsparse"
@@ -60,6 +61,9 @@ def parse_args() -> Arguments:
         "--wandb-project", type=str, default="megatron-dsparse", help="Wandb project"
     )
     parser.add_argument("--steps", type=int, default=1000, help="Number of steps to run")
+    parser.add_argument(
+        "--lr-warmup-fraction", type=float, default=0.01, help="Learning rate warmup fraction"
+    )
     parser.add_argument("--run-ldconfig", action="store_true", help="Run ldconfig before training")
     args = parser.parse_args()
     return Arguments(**vars(args))
@@ -80,7 +84,7 @@ def get_model_size(train_args: dict) -> int:
 
 def get_memory_usage(model_size: int) -> int:
     fp32_size = model_size * 4  # store an fp32 copy of model weights in optimizer
-    # , bytes per weight + 2 bytes per activation + 2 bytes per gradient + 2 bytes safety margin
+    # 2 bytes per weight + 2 bytes per activation + 2 bytes per gradient + 2 bytes safety margin
     bf16_size = model_size * (2 + 2 + 2 + 2)
     return fp32_size + bf16_size
 
@@ -189,7 +193,7 @@ def get_training_arguments(args: Arguments) -> dict:
 
     res["train_iters"] = args.steps
     res["lr_decay_iters"] = args.steps
-    res["lr_warmup_fraction"] = 0.01
+    res["lr_warmup_fraction"] = args.lr_warmup_fraction
     res["lr_decay_style"] = "cosine"
     res["min_lr"] = args.learning_rate * 0.1
 
@@ -259,9 +263,8 @@ def main():
         model_size = get_model_size(train_args)
         memory_usage = get_memory_usage(model_size)
         print_rank_0(f"Expected memory usage (GB): {memory_usage/1e9:.2f}")
-        num_gpus = int(torchrun_args["nnodes"]) * int(torchrun_args["nproc_per_node"])
         gpu_memory = torch.cuda.get_device_properties(0).total_memory
-        micro_batch_size = (num_gpus * gpu_memory) / memory_usage
+        micro_batch_size = gpu_memory / memory_usage
         print_rank_0(f"Calculated micro batch size: {micro_batch_size:.2f}")
         micro_batch_size = int(2 ** math.floor(math.log2(micro_batch_size)))
         print_rank_0(f"Setting micro batch size to: {micro_batch_size}")
