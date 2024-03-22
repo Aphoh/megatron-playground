@@ -24,6 +24,7 @@ class Arguments:
     tensorboard_dir: str = "/tensorboard"
     wandb_project: str = "megatron-dsparse"
     steps: int = 1000
+    run_ldconfig: bool = False
 
 
 rank = int(os.environ.get("SLURM_PROCID", "0"))
@@ -59,6 +60,7 @@ def parse_args() -> Arguments:
         "--wandb-project", type=str, default="megatron-dsparse", help="Wandb project"
     )
     parser.add_argument("--steps", type=int, default=1000, help="Number of steps to run")
+    parser.add_argument("--run-ldconfig", action="store_true", help="Run ldconfig before training")
     args = parser.parse_args()
     return Arguments(**vars(args))
 
@@ -77,8 +79,10 @@ def get_model_size(train_args: dict) -> int:
 
 
 def get_memory_usage(model_size: int) -> int:
-    # 4 bytes per weight + 2 bytes per activation + 2 bytes per gradient + 2 bytes safety margin
-    return model_size * (4 + 2 + 2 + 2)
+    fp32_size = model_size * 4  # store an fp32 copy of model weights in optimizer
+    # , bytes per weight + 2 bytes per activation + 2 bytes per gradient + 2 bytes safety margin
+    bf16_size = model_size * (2 + 2 + 2 + 2)
+    return fp32_size + bf16_size
 
 
 def download_pythia(args: Arguments) -> Path:
@@ -99,7 +103,7 @@ def download_pythia(args: Arguments) -> Path:
                     "tools/checkpoint/convert_pythia_ckpt.py",
                     model_bin_path,
                     pythia_ckpt_dir,
-                ].split()
+                ]
             )
             if res.returncode != 0:
                 subprocess.run(["rm", "-r", pythia_ckpt_dir])
@@ -137,7 +141,7 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
 
 def get_model_arch_arguments(args: Arguments) -> dict:
     res = {"use_mcore_models": ()}
-    if res.load_pythia:
+    if args.load_pythia:
         repo = pythia_repo(args)
         print_rank_0(f"Loading Pythia config from {repo}")
         pythia_config = GPTNeoXConfig.from_pretrained(repo, cache_dir=args.hf_cache_dir)
@@ -153,8 +157,8 @@ def get_model_arch_arguments(args: Arguments) -> dict:
         if not pythia_config.tie_word_embeddings:
             res["untie_embeddings_and_output_weights"] = ()
 
-        res["use_parallel_residual"] = pythia_config.use_parallel_residual
-        res["tokenizer"] = pythia_config.vocab_size
+        if pythia_config.use_parallel_residual:
+            res["use_parallel_residual"] = ()
 
         # static arguments
         res["position_embedding_type"] = "rope"
@@ -175,10 +179,10 @@ def get_model_arch_arguments(args: Arguments) -> dict:
 
 def get_training_arguments(args: Arguments) -> dict:
     res = {"lr": args.learning_rate, "bf16": ()}
-    if res.load_pythia:
+    if args.load_pythia:
         res["adam_beta1"] = 0.9
         res["adam_beta2"] = 0.95
-        res["adam_epsilon"] = 1e-8
+        res["adam_eps"] = 1e-8
         res["global_batch_size"] = 1024
         res["finetune"] = ()
 
@@ -209,8 +213,8 @@ def get_logging_arguments(args: Arguments) -> dict:
 def get_torchrun_args(args: Arguments) -> dict:
     res = {}
     if is_slurm:
-        res["nnodes"] = int(os.environ["SLURM_STEP_NUM_NODES"])
-        res["nproc_per_node"] = os.environ["SLURM_GPUS_ON_NODE"]
+        res["nnodes"] = int(os.environ["SLURM_JOB_NUM_NODES"])
+        res["nproc_per_node"] = int(os.environ["SLURM_GPUS_ON_NODE"])
         if res["nnodes"] == 1:
             res["standalone"] = ()
         else:
@@ -239,6 +243,8 @@ def get_torchrun_args(args: Arguments) -> dict:
 
 def main():
     args = parse_args()
+    if args.run_ldconfig:
+        assert subprocess.run(["ldconfig"]).returncode == 0, "ldconfig failed"
 
     train_args = (
         get_checkpoint_load_arguments(args)
@@ -251,20 +257,27 @@ def main():
     if "micro_batch_size" not in train_args:
         model_size = get_model_size(train_args)
         memory_usage = get_memory_usage(model_size)
-        num_gpus = torchrun_args["nnodes"] * torchrun_args["nproc_per_node"]
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory
-        micro_batch_size = memory_usage // (num_gpus * gpu_memory)
-        micro_batch_size = int(2 ** math.floor(math.log2(micro_batch_size)))
         print_rank_0(f"Expected memory usage (GB): {memory_usage/1e9:.2f}")
+        num_gpus = int(torchrun_args["nnodes"]) * int(torchrun_args["nproc_per_node"])
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory
+        micro_batch_size = (num_gpus * gpu_memory) / memory_usage
+        print_rank_0(f"Calculated micro batch size: {micro_batch_size:.2f}")
+        micro_batch_size = int(2 ** math.floor(math.log2(micro_batch_size)))
         print_rank_0(f"Setting micro batch size to: {micro_batch_size}")
-        print_rank_0(f"Approximate memory usage per gpu (GB): {memory_usage / num_gpus / 1e9:.2f}")
+        print_rank_0(
+            f"Approximate memory usage per gpu (GB): {micro_batch_size * memory_usage / num_gpus / 1e9:.2f}"
+        )
+        train_args["micro_batch_size"] = micro_batch_size
 
-    print_rank_0(f"Running with args: {train_args}")
+    # print environment variables
+    print_rank_0(f"Running with args: {train_args}", flush=True)
+    os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     subprocess.run(
         ["torchrun"]
         + arg_dict_to_list(torchrun_args)
         + ["pretrain_gpt.py"]
         + arg_dict_to_list(train_args),
+        env=os.environ,
     )
 
 

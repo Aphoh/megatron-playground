@@ -432,8 +432,6 @@ def validate_args(args, defaults={}):
     if args.dsparse_factor is not None:
         if not args.use_mcore_models:
             raise RuntimeError('--dsparse-factor only supported with Megatron Core, please add --use-mcore-models.')
-        if args.transformer_impl != 'local':
-            raise RuntimeError('--dsparse-factor only supported with local transformer implementation.')
         if args.dsparse_factor <= 0:
             raise RuntimeError('--dsparse-factor must be greater than 0.')
         if args.dsparse_anneal and args.dsparse_start_t is None:
