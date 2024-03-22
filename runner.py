@@ -173,6 +173,7 @@ def get_model_arch_arguments(args: Arguments) -> dict:
         res["hidden_dropout"] = 0.0
         res["weight_decay"] = 0.01
         res["seq_length"] = 2048
+        res["transformer_impl"] = "transformer_engine"
 
     return res
 
