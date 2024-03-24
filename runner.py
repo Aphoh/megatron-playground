@@ -27,14 +27,17 @@ class Arguments:
     steps: int = 1000
     run_ldconfig: bool = False
 
+    # torchrun arguments
+    rank: int
+    nnodes: int
+    gpus_per_node: Optional[int]
+    hostnames: Optional[List[str]]
+    rdzv_id: Optional[str]
 
-rank = int(os.environ.get("SLURM_PROCID", "0"))
-is_slurm: bool = os.environ.get("SLURM_PROCID") is not None
 
-
-def print_rank_0(*args, **kwargs):
-    if rank == 0:
-        print(*args, **kwargs)
+def print_rank_0(args: Arguments, *varargs, **kwargs):
+    if args.rank == 0:
+        print(*varargs, **kwargs)
 
 
 def parse_args() -> Arguments:
@@ -65,7 +68,26 @@ def parse_args() -> Arguments:
         "--lr-warmup-fraction", type=float, default=0.01, help="Learning rate warmup fraction"
     )
     parser.add_argument("--run-ldconfig", action="store_true", help="Run ldconfig before training")
+
+    parser.add_argument("--rank", type=int, help="Rank of the current process")
+    parser.add_argument("--nnodes", type=int, help="Number of nodes")
+    parser.add_argument("--gpus-per-node", type=int, help="Number of GPUs per node")
+    parser.add_argument("--hostnames", type=str, help="Hostnames of the nodes involved")
+    parser.add_argument("--rzdv_id", type=str, help="Rondevouz ID")
     args = parser.parse_args()
+
+    if args.rank is None:
+        args.rank = int(os.environ["MGT_RANK"])
+    if args.nnodes is None:
+        args.nnodes = int(os.environ["MGT_WORLD_SIZE"])
+    if args.nnodes != 1 and args.gpus_per_node is None:
+        args.gpus_per_node = int(os.environ["MGT_NUM_GPUS"])
+    if args.nnodes != 1 and args.hostnames is None:
+        args.hostnames = os.environ["MGT_HOSTS"]
+    if args.hostnames is not None:
+        args.hostnames = [k for v in args.hostnames.split() for k in v.split(",")]
+    if args.rzdv_id is None:
+        args.rzdv_id = os.environ["MGT_RZDV_ID"]
     return Arguments(**vars(args))
 
 
@@ -110,8 +132,6 @@ def download_pythia(args: Arguments) -> Path:
                 ]
             )
             if res.returncode != 0:
-                subprocess.run(["rm", "-r", pythia_ckpt_dir])
-                subprocess.run(["scancel", os.environ.get("SLURM_JOB_ID")])
                 raise RuntimeError("Failed to convert pythia checkpoint")
 
             print(f"Pythia checkpoint successfully converted to {pythia_ckpt_dir}")
@@ -137,7 +157,7 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
     res = {"save": Path(args.checkpoint_dir) / args.name}
     if args.load_pythia:
         repo = pythia_repo(args)
-        print_rank_0(f"Downloading pythia checkpoint from {repo}")
+        print_rank_0(args, f"Downloading pythia checkpoint from {repo}")
         ckpt_loc = download_pythia(args)
         res["load"] = ckpt_loc
     return res
@@ -147,7 +167,7 @@ def get_model_arch_arguments(args: Arguments) -> dict:
     res = {"use_mcore_models": ()}
     if args.load_pythia:
         repo = pythia_repo(args)
-        print_rank_0(f"Loading Pythia config from {repo}")
+        print_rank_0(args, f"Loading Pythia config from {repo}")
         pythia_config = GPTNeoXConfig.from_pretrained(repo, cache_dir=args.hf_cache_dir)
         # Arguments from the config
         res["hidden_size"] = pythia_config.hidden_size
@@ -217,32 +237,23 @@ def get_logging_arguments(args: Arguments) -> dict:
 
 def get_torchrun_args(args: Arguments) -> dict:
     res = {}
-    if is_slurm:
-        res["nnodes"] = int(os.environ["SLURM_JOB_NUM_NODES"])
-        res["nproc_per_node"] = int(os.environ["SLURM_GPUS_ON_NODE"])
-        if res["nnodes"] == 1:
-            res["standalone"] = ()
-        else:
-            nodelist = os.environ["SLURM_JOB_NODELIST"]
-            hostnames = subprocess.run(
-                f"scontrol show hostnames {nodelist}".split(), capture_output=True
-            )
-            if hostnames.returncode != 0:
-                raise RuntimeError("Failed to get hostnames")
-            head_node = hostnames.stdout.split()[0].decode("utf-8")
-            try:
-                # Resolve the head node's hostname to IP address
-                head_node_ip = socket.gethostbyname(head_node)
-                print(f"Head node IP: {head_node_ip}")
-            except socket.gaierror:
-                raise RuntimeError("Could not resolve the head node's IP address.")
-            res["rdzv_id"] = os.environ["RANDOM"]
-            res["rdzv_endpoint"] = f"{head_node_ip}:29500"
-            res["rdzv_backend"] = "c10d"
+    res["nnodes"] = args.nnodes
+    if args.nnodes != 1:
+        res["nproc_per_node"] = args.gpus_per_node
+        head_node = args.hostnames[0]
+        try:
+            # Resolve the head node's hostname to IP address
+            head_node_ip = socket.gethostbyname(head_node)
+            print(f"Head node IP: {head_node_ip}")
+        except socket.gaierror:
+            raise RuntimeError("Could not resolve the head node's IP address.")
+        res["rdzv_id"] = args.rdzv_id
+        res["rdzv_endpoint"] = f"{head_node_ip}:29500"
+        res["rdzv_backend"] = "c10d"
     else:
-        res["nnodes"] = 1
         res["standalone"] = ()
-        res["nproc_per_node"] = torch.cuda.device_count()
+        res["nproc_per_node"] = args.gpus_per_node or torch.cuda.device_count()
+
     return res
 
 
@@ -262,19 +273,20 @@ def main():
     if "micro_batch_size" not in train_args:
         model_size = get_model_size(train_args)
         memory_usage = get_memory_usage(model_size)
-        print_rank_0(f"Expected memory usage (GB): {memory_usage/1e9:.2f}")
+        print_rank_0(args, f"Expected memory usage (GB): {memory_usage/1e9:.2f}")
         gpu_memory = torch.cuda.get_device_properties(0).total_memory
         micro_batch_size = gpu_memory / memory_usage
-        print_rank_0(f"Calculated micro batch size: {micro_batch_size:.2f}")
+        print_rank_0(args, f"Calculated micro batch size: {micro_batch_size:.2f}")
         micro_batch_size = int(2 ** math.floor(math.log2(micro_batch_size)))
-        print_rank_0(f"Setting micro batch size to: {micro_batch_size}")
+        print_rank_0(args, f"Setting micro batch size to: {micro_batch_size}")
         print_rank_0(
-            f"Approximate memory usage per gpu (GB): {micro_batch_size * memory_usage / num_gpus / 1e9:.2f}"
+            args,
+            f"Approximate memory usage per gpu (GB): {micro_batch_size * memory_usage / 1e9:.2f}",
         )
         train_args["micro_batch_size"] = micro_batch_size
 
     # print environment variables
-    print_rank_0(f"Running with args: {train_args}", flush=True)
+    print_rank_0(args, f"Running with args: {train_args}", flush=True)
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     subprocess.run(
         ["torchrun"]
