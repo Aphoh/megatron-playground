@@ -16,23 +16,59 @@ import math
 @dataclass
 class Arguments:
     name: str
-    load_pythia: Optional[str] = None
-    data_dir: str = "/data"
-    hf_cache_dir: str = "/hf_cache"
-    learning_rate: float = 6e-4
-    lr_warmup_fraction: float = 0.01
-    checkpoint_dir: str = "/checkpoint"
-    tensorboard_dir: str = "/tensorboard"
-    wandb_project: str = "megatron-dsparse"
-    steps: int = 1000
-    run_ldconfig: bool = False
 
     # torchrun arguments
     rank: int
     nnodes: int
-    gpus_per_node: Optional[int]
-    hostnames: Optional[List[str]]
-    rdzv_id: Optional[str]
+    gpus_per_node: Optional[int] = None
+    hostnames: Optional[List[str]] = None
+    rdzv_id: Optional[str] = None
+
+    # running args
+    steps: int = 1000
+    run_ldconfig: bool = False
+    ## model loading
+    load_pythia: Optional[str] = None
+    load_checkpoint: Optional[str] = None
+    ## paths
+    data_dir: str = "/data"
+    checkpoint_dir: str = "/checkpoint"
+    tensorboard_dir: str = "/tensorboard"
+    hf_cache_dir: str = "/hf_cache"
+    learning_rate: float = 6e-4
+    lr_decay_time_fraction: float = 1.0
+    lr_warmup_fraction: float = 0.01
+
+    # logging
+    wandb_project: str = "megatron-dsparse"
+
+    # dsparse arguments
+    do_dsparse: bool = False
+    from_model_size: Optional[str] = None
+    to_model_size: Optional[str] = None
+    ## 1/dsparse_factor is the fraction of the experts each token is routed to
+    dsparse_factor: Optional[int] = None
+
+
+def model_config_from_size(model_size: str) -> dict:
+    # Assumes ffn hidden size of 4*hidden_size
+    # num_layers, hidden_size, heads
+    sizes = {
+        "14m": (6, 512, 8),
+        "160m": (12, 768, 12),
+        "410m": (24, 1024, 16),
+        "1.0b": (16, 2048, 8),
+        "1.4b": (24, 2048, 16),
+        "2.8b": (32, 2560, 32),
+        "6.9b": (32, 4096, 32),
+        "12b": (36, 5120, 40),
+    }
+    num_layers, hidden_size, heads = sizes[model_size]
+    return {
+        "num_layers": num_layers,
+        "hidden_size": hidden_size,
+        "num_attention_heads": heads,
+    }
 
 
 def print_rank_0(args: Arguments, *varargs, **kwargs):
@@ -57,6 +93,7 @@ def parse_args() -> Arguments:
         '--hf-cache-dir', type=str, default="/hf_cache", help='Location of huggingface cache'
     )
     parser.add_argument("--learning-rate", type=float, default=6e-4, help="Learning rate")
+    parser.add_argument("--lr-decay-time-fraction", type=float, default=1.0, help="Learning rate")
     parser.add_argument(
         "--tensorboard-dir", type=str, default="/tensorboard", help="Tensorboard dir"
     )
@@ -74,6 +111,11 @@ def parse_args() -> Arguments:
     parser.add_argument("--gpus-per-node", type=int, help="Number of GPUs per node")
     parser.add_argument("--hostnames", type=str, help="Hostnames of the nodes involved")
     parser.add_argument("--rdzv-id", type=str, help="Rondevouz ID")
+
+    parser.add_argument("--do-dsparse", action="store_true", help="Enable dsparse")
+    parser.add_argument("--from-model-size", type=str, help="Starting model size")
+    parser.add_argument("--to-model-size", type=str, help="Ending model size")
+    parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
     args = parser.parse_args()
 
     if args.rank is None:
@@ -212,7 +254,7 @@ def get_training_arguments(args: Arguments) -> dict:
         res["finetune"] = ()
 
     res["train_iters"] = args.steps
-    res["lr_decay_iters"] = args.steps
+    res["lr_decay_iters"] = args.steps * args.lr_decay_time_fraction
     res["lr_warmup_fraction"] = args.lr_warmup_fraction
     res["lr_decay_style"] = "cosine"
     res["min_lr"] = args.learning_rate * 0.1
@@ -232,6 +274,73 @@ def get_logging_arguments(args: Arguments) -> dict:
         "wandb_project": args.wandb_project,
         "wandb_exp_name": args.name,
     }
+    return res
+
+
+def calc_ideal_num_experts(dm1, dm2, c, H1, H2, nl1, nl2, v):
+    # First term
+    term1 = -(2 * dm2 * (2 * c + H2)) / c
+    # Second term
+    term2 = -v / nl2
+    # Third term
+    term3 = (dm1 * (2 * dm1 * (2 + H1) * nl1 + v)) / (dm2 * nl2)
+
+    # Total quantity
+    total_quantity = term1 + term2 + term3
+    return total_quantity
+
+
+def round_down_to_divisor(k, n):
+    while k > 0:
+        if n % k == 0:
+            return k
+        k -= 1
+    return None  # In case no divisor is found which should not happen unless k <= 0
+
+
+def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
+    res = {}
+    if args.do_dsparse:
+        res["dsparse"] = ()
+        assert args.dsparse_factor is not None, "dsparse factor must be set"
+        res["dsparse_factor"] = args.dsparse_factor
+        from_model_size = model_config_from_size(args.from_model_size)
+        to_model_size = model_config_from_size(args.to_model_size)
+        will_load_size = {
+            "num_layers": so_far["num_layers"],
+            "hidden_size": so_far["hidden_size"],
+            "num_attention_heads": so_far["num_attention_heads"],
+        }
+        assert (
+            from_model_size == will_load_size
+        ), f"Model size mismatch: {from_model_size} != {will_load_size}"
+        num_exp = calc_ideal_num_experts(
+            from_model_size["hidden_size"],
+            to_model_size["hidden_size"],
+            args.dsparse_factor,
+            4,  # TODO: accept this as a hp
+            4,
+            from_model_size["num_layers"],
+            to_model_size["num_layers"],
+        )
+        assert num_exp > 1, "Number of experts must be > 1"
+        div_num_exp = round_down_to_divisor(num_exp, 4 * from_model_size["hidden_size"])
+        assert (
+            div_num_exp is not None
+        ), f"num_exp={num_exp}, hidden_size={4*from_model_size['hidden_size']}"
+        args["dsparse_nblocks"] = div_num_exp
+        print_rank_0(
+            args,
+            f"For dsparse factor {args.dsparse_factor} and hidden size {from_model_size['hidden_size']}",
+        )
+        print_rank_0(
+            args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
+        )
+        args["dsparse_start_t"] = 1
+        args["dsparse_normalize_mask"] = ()
+        args["dsparse_finetune"] = ()
+        args["dsparse_anneal"] = ()
+
     return res
 
 
@@ -268,6 +377,7 @@ def main():
         | get_training_arguments(args)
         | get_logging_arguments(args)
     )
+    train_args |= get_dsparse_arguments(args, train_args)
     torchrun_args = get_torchrun_args(args)
 
     if "micro_batch_size" not in train_args:
