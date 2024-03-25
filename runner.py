@@ -73,7 +73,7 @@ def parse_args() -> Arguments:
     parser.add_argument("--nnodes", type=int, help="Number of nodes")
     parser.add_argument("--gpus-per-node", type=int, help="Number of GPUs per node")
     parser.add_argument("--hostnames", type=str, help="Hostnames of the nodes involved")
-    parser.add_argument("--rzdv_id", type=str, help="Rondevouz ID")
+    parser.add_argument("--rdzv-id", type=str, help="Rondevouz ID")
     args = parser.parse_args()
 
     if args.rank is None:
@@ -86,8 +86,8 @@ def parse_args() -> Arguments:
         args.hostnames = os.environ["MGT_HOSTS"]
     if args.hostnames is not None:
         args.hostnames = [k for v in args.hostnames.split() for k in v.split(",")]
-    if args.rzdv_id is None:
-        args.rzdv_id = os.environ["MGT_RZDV_ID"]
+    if args.rdzv_id is None:
+        args.rdzv_id = os.environ["MGT_RZDV_ID"]
     return Arguments(**vars(args))
 
 
