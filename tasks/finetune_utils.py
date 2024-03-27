@@ -192,7 +192,7 @@ def _train(model, optimizer, opt_param_scheduler, forward_step,
             if args.log_params_norm:
                 params_norm = calc_params_l2_norm(model)
             report_memory_flag = training_log(losses_dict, losses_dict_sum,
-                                              optimizer.param_groups[0]['lr'],
+                                              [g["lr"] for g in optimizer.param_groups],
                                               iteration,
                                               optimizer.get_loss_scale().item(),
                                               report_memory_flag, skipped_iter,

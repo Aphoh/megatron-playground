@@ -9,6 +9,7 @@ from .distrib_optimizer import DistributedOptimizer
 from .grad_scaler import ConstantGradScaler, DynamicGradScaler
 from .optimizer import ChainedOptimizer, Float16OptimizerWithFloat16Params, FP32Optimizer
 from .optimizer_config import OptimizerConfig
+from megatron.utils import print_rank_0
 
 
 def get_param_groups(model_chunks, no_weight_decay_cond, scale_lr_cond, lr_mult):
@@ -58,17 +59,17 @@ def get_param_groups(model_chunks, no_weight_decay_cond, scale_lr_cond, lr_mult)
                 scale_lr = scale_lr_cond(name, param)
             else:
                 scale_lr = False
-
+            
             if not no_wd and not scale_lr:
-                wd_mult, lr_mult = 1.0, 1.0
+                param_wd_mult, param_lr_mult = 1.0, 1.0
             elif not no_wd and scale_lr:
-                wd_mult, lr_mult = 1.0, lr_mult
+                param_wd_mult, param_lr_mult = 1.0, lr_mult
             elif no_wd and not scale_lr:
-                wd_mult, lr_mult = 0.0, 1.0
+                param_wd_mult, param_lr_mult = 0.0, 1.0
             else:
-                wd_mult, lr_mult = 0.0, lr_mult
+                param_wd_mult, param_lr_mult = 0.0, lr_mult
 
-            params_map[(wd_mult, lr_mult, is_expert_parallel)].append(param)
+            params_map[(param_wd_mult, param_lr_mult, is_expert_parallel)].append(param)
 
     param_groups = []
     for (wd_mult, lr_mult, is_expert_parallel), params in params_map.items():
@@ -82,6 +83,10 @@ def get_param_groups(model_chunks, no_weight_decay_cond, scale_lr_cond, lr_mult)
                 'is_expert_parallel': is_expert_parallel,
             }
         )
+    for i, p in enumerate(param_groups):
+        print_rank_0(
+            f"Got param group {i} with wd_mult={p['wd_mult']}, lr_mult={p['lr_mult']}, is_expert_parallel={p['is_expert_parallel']}, num_params={len(p['params'])}"
+            )
 
     return param_groups
 

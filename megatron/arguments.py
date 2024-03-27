@@ -1523,7 +1523,7 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-nblocks", type=int, default=None, help="DSparsity nblocks for the model")
     group.add_argument("--dsparse-finetune", action="store_true", help="Finetune the model with DSparsity")
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
-    group.add_argument("--dsparse-start-t", type=int, default=None, help="DSparsity start_t for the model")
+    group.add_argument("--dsparse-start-t", type=float, default=None, help="DSparsity start_t for the model")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
     group.add_argument("--dsparse-router-init-method", type=str, choices=['const', 'std'], default='std', help="DSparsity router init method")
     group.add_argument("--dsparse-lr-mult", type=float, default=1.0, help="DSparse router lr scaling")

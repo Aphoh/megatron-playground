@@ -344,7 +344,7 @@ def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
             args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
         )
         res["dsparse_start_t"] = args.dsparse_start_t
-        res["dsparse_lr_mult"] = args.dsparse_start_t
+        res["dsparse_lr_mult"] = args.dsparse_lr_mult
         res["dsparse_normalize_mask"] = ()
         res["dsparse_finetune"] = ()
         res["dsparse_anneal"] = ()

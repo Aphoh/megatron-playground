@@ -150,7 +150,7 @@ def _train(
             report_memory_flag = training_log(
                 losses_dict,
                 losses_dict_sum,
-                optimizer.param_groups[0]["lr"],
+                [g["lr"] for g in optimizer.param_groups],
                 iteration,
                 optimizer.get_loss_scale().item(),
                 report_memory_flag,

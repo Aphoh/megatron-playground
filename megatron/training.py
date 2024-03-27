@@ -220,7 +220,7 @@ def pretrain(train_valid_test_dataset_provider,
     
     kwargs = {}
     if args.dsparse_lr_mult != 1.0:
-        kwargs["scale_lr_cond"] = lambda x: 'shard_mask' in x[0]
+        kwargs["scale_lr_cond"] = lambda name, _: "shard_mask" in name
         kwargs["lr_mult"] = args.dsparse_lr_mult
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
         model_provider, model_type, **kwargs)
@@ -618,7 +618,7 @@ def train_step(forward_step_func, data_iterator,
     return {}, skipped_iter, grad_norm, num_zeros_in_grad
 
 
-def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
+def training_log(loss_dict, total_loss_dict, learning_rates, iteration,
                  loss_scale, report_memory_flag, skipped_iter,
                  grad_norm, params_norm, num_zeros_in_grad, dsparse_k=None, dsparse_t=None):
     """Log training information such as losses, timing, ...."""
@@ -708,11 +708,12 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             wandb_writer.log({'samples vs steps': args.consumed_train_samples},
                              iteration)
         if args.log_learning_rate_to_tensorboard:
-            writer.add_scalar('learning-rate', learning_rate, iteration)
-            writer.add_scalar('learning-rate vs samples', learning_rate,
-                              args.consumed_train_samples)
-            if wandb_writer:
-                wandb_writer.log({'learning-rate': learning_rate}, iteration)
+            for group_idx, learning_rate in enumerate(learning_rates):
+                writer.add_scalar(f'learning-rate-group-{group_idx}', learning_rate, iteration)
+                writer.add_scalar(f'learning-rate-group-{group_idx} vs samples', learning_rate,
+                                args.consumed_train_samples)
+                if wandb_writer:
+                    wandb_writer.log({f'learning-rate-group-{group_idx}': learning_rate}, iteration)
         if args.log_batch_size_to_tensorboard:
             writer.add_scalar('batch-size', batch_size, iteration)
             writer.add_scalar('batch-size vs samples', batch_size,
@@ -806,7 +807,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                     writer.add_scalar('throughput', throughput, iteration)
                 if wandb_writer:
                     wandb_writer.log({'throughput': throughput}, iteration)
-        log_string += ' learning rate: {:.3E} |'.format(learning_rate)
+        lr_strings = ' '.join(['{:.3E}'.format(lr) for lr in learning_rates])
+        log_string += ' learning rates: {} |'.format(lr_strings)
         log_string += ' global batch size: {:5d} |'.format(batch_size)
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key,
@@ -831,7 +833,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
         print_rank_last(log_string)
-        if report_memory_flag and learning_rate > 0.:
+        if report_memory_flag and any(lr > 0 for lr in learning_rates):
             # Report memory after optimizer state has been initialized.
             if torch.distributed.get_rank() == 0:
                 num_microbatches = get_num_microbatches()
@@ -1030,7 +1032,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             track_e2e_metrics()
 
         report_memory_flag = training_log(loss_dict, total_loss_dict,
-                                          optimizer.param_groups[0]['lr'],
+                                          [g["lr"] for g in optimizer.param_groups],
                                           iteration, loss_scale,
                                           report_memory_flag, skipped_iter,
                                           grad_norm, params_norm, num_zeros_in_grad,
