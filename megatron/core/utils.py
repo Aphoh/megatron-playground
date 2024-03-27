@@ -172,6 +172,13 @@ def init_method_normal(sigma):
 
     return init_
 
+def init_method_constant():
+    """Init method based on 1/dim where dim is the last tensor dim."""
+
+    def init_(tensor):
+        return torch.nn.init.constant_(tensor, 1/tensor.shape[-1])
+
+    return init_
 
 def scaled_init_method_normal(sigma, num_layers):
     """Init method based on N(0, sigma/sqrt(2*num_layers)."""

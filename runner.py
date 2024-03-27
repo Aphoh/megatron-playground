@@ -1,4 +1,3 @@
-import sys
 import os
 import subprocess
 import argparse
@@ -48,6 +47,7 @@ class Arguments:
     to_model_size: Optional[str] = None
     ## 1/dsparse_factor is the fraction of the experts each token is routed to
     dsparse_factor: Optional[int] = None
+    dsparse_start_t: float = 1.0
 
 
 def model_config_from_size(model_size: str) -> dict:
@@ -116,6 +116,7 @@ def parse_args() -> Arguments:
     parser.add_argument("--from-model-size", type=str, help="Starting model size")
     parser.add_argument("--to-model-size", type=str, help="Ending model size")
     parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
+    parser.add_argument("--dsparse-start-t", type=float, default=1.0, help="dsparse factor")
     args = parser.parse_args()
 
     if args.rank is None:
@@ -143,10 +144,13 @@ def get_model_size(train_args: dict) -> int:
     model_size += n_layers * 2 * emb_size * ffn_size  # ffn
     if "untie_embeddings_and_output_weights" in train_args:
         model_size += emb_size * vocab_size  # output embeddings
+    if train_args.get("dsparse_factor", False):
+        model_size += n_layers * emb_size * train_args["dsparse_nblocks"]
     return model_size
 
 
-def get_memory_usage(model_size: int) -> int:
+def get_memory_usage(train_args: dict) -> int:
+    model_size = get_model_size(train_args)
     fp32_size = model_size * 4  # store an fp32 copy of model weights in optimizer
     # 2 bytes per weight + 2 bytes per activation + 2 bytes per gradient + 2 bytes safety margin
     bf16_size = model_size * (2 + 2 + 2 + 2)
@@ -159,7 +163,7 @@ def download_pythia(args: Arguments) -> Path:
     with FileLock(lock_file):
         if not pythia_ckpt_dir.exists():
             # We're the first to get here, download the model
-            print(f"Downloading pythia model on rank {rank}")
+            print(f"Downloading pythia model on rank {args.rank}")
             model_bin_path = hf_hub_download(
                 pythia_repo(args), 'pytorch_model.bin', cache_dir=args.hf_cache_dir
             )
@@ -254,7 +258,7 @@ def get_training_arguments(args: Arguments) -> dict:
         res["finetune"] = ()
 
     res["train_iters"] = args.steps
-    res["lr_decay_iters"] = args.steps * args.lr_decay_time_fraction
+    res["lr_decay_iters"] = int(args.steps * args.lr_decay_time_fraction)
     res["lr_warmup_fraction"] = args.lr_warmup_fraction
     res["lr_decay_style"] = "cosine"
     res["min_lr"] = args.learning_rate * 0.1
@@ -301,7 +305,6 @@ def round_down_to_divisor(k, n):
 def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
     res = {}
     if args.do_dsparse:
-        res["dsparse"] = ()
         assert args.dsparse_factor is not None, "dsparse factor must be set"
         res["dsparse_factor"] = args.dsparse_factor
         from_model_size = model_config_from_size(args.from_model_size)
@@ -315,20 +318,22 @@ def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
             from_model_size == will_load_size
         ), f"Model size mismatch: {from_model_size} != {will_load_size}"
         num_exp = calc_ideal_num_experts(
-            from_model_size["hidden_size"],
             to_model_size["hidden_size"],
+            from_model_size["hidden_size"],
             args.dsparse_factor,
             4,  # TODO: accept this as a hp
             4,
-            from_model_size["num_layers"],
             to_model_size["num_layers"],
+            from_model_size["num_layers"],
+            50304,
         )
+        num_exp = int(round(num_exp))
         assert num_exp > 1, "Number of experts must be > 1"
         div_num_exp = round_down_to_divisor(num_exp, 4 * from_model_size["hidden_size"])
         assert (
             div_num_exp is not None
         ), f"num_exp={num_exp}, hidden_size={4*from_model_size['hidden_size']}"
-        args["dsparse_nblocks"] = div_num_exp
+        res["dsparse_nblocks"] = div_num_exp
         print_rank_0(
             args,
             f"For dsparse factor {args.dsparse_factor} and hidden size {from_model_size['hidden_size']}",
@@ -336,10 +341,11 @@ def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
         print_rank_0(
             args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
         )
-        args["dsparse_start_t"] = 1
-        args["dsparse_normalize_mask"] = ()
-        args["dsparse_finetune"] = ()
-        args["dsparse_anneal"] = ()
+        res["dsparse_start_t"] = args.dsparse_start_t
+        res["dsparse_normalize_mask"] = ()
+        res["dsparse_finetune"] = ()
+        res["dsparse_anneal"] = ()
+        res["dsparse_router_init_method"] = "const"
 
     return res
 
@@ -381,8 +387,7 @@ def main():
     torchrun_args = get_torchrun_args(args)
 
     if "micro_batch_size" not in train_args:
-        model_size = get_model_size(train_args)
-        memory_usage = get_memory_usage(model_size)
+        memory_usage = get_memory_usage(train_args)
         print_rank_0(args, f"Expected memory usage (GB): {memory_usage/1e9:.2f}")
         gpu_memory = torch.cuda.get_device_properties(0).total_memory
         micro_batch_size = gpu_memory / memory_usage

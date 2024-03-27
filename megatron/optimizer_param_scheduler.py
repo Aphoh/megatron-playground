@@ -257,6 +257,9 @@ class DSparseScheduler(OptimizerParamScheduler):
         if self.lr_warmup_steps > 0 and self.num_steps <= self.lr_warmup_steps:
             self.dsp_k = self.dsp_start_k
             self.dsp_t = self.dsp_start_t
+        elif self.num_steps > self.lr_decay_steps:
+            self.dsp_k = self.dsp_end_k
+            self.dsp_t = self.dsp_end_t
         else:
             num_steps_ = self.num_steps - self.lr_warmup_steps
             decay_steps_ = self.lr_decay_steps - self.lr_warmup_steps

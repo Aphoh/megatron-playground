@@ -17,6 +17,8 @@ from megatron.core.fusions.fused_bias_gelu import bias_gelu_impl
 from megatron.core.fusions.fused_bias_swiglu import bias_swiglu_impl
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.tensor_parallel import ColumnParallelLinear
+import megatron.core.tensor_parallel as tp
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 
@@ -128,7 +130,8 @@ class MLP(MegatronModule):
                 sub_sd = self._sharded_state_dict_for_glu(name, module, prefix, sharded_offsets)
             else:
                 sub_sd = module.sharded_state_dict(
-                    prefix=f'{prefix}{name}.', sharded_offsets=sharded_offsets,
+                    prefix=f'{prefix}{name}.',
+                    sharded_offsets=sharded_offsets,
                 )
             sharded_state_dict.update(sub_sd)
         return sharded_state_dict
@@ -142,7 +145,8 @@ class MLP(MegatronModule):
     ):
         assert module_name == 'linear_fc1', module_name
         sharded_state_dict = module.sharded_state_dict(
-            prefix=f'{prefix}{module_name}.', sharded_offsets=sharded_offsets,
+            prefix=f'{prefix}{module_name}.',
+            sharded_offsets=sharded_offsets,
         )
         weight_key = f'{prefix}{module_name}.weight'
         prev_sh_ten = sharded_state_dict[weight_key]
@@ -193,6 +197,7 @@ class MLP(MegatronModule):
         )
         return sharded_state_dict
 
+
 @dataclass
 class MLPDShardSubmodules(MLPSubmodules):
     linear_fc1_shard_mask: Union[ModuleSpec, type] = None
@@ -221,14 +226,16 @@ class MLPDShard(MLP):
             skip_bias_add=True,
             is_expert=False,
         )
-        if self.linear_fc1_shard_mask.tp_size > 1:
+        if parallel_state.get_tensor_model_parallel_world_size() > 1:
             raise ValueError("MLPDShard does not support tensor parallelism")
 
         self.experts_per_token = self.config.dsparse_nblocks // self.config.dsparse_factor
         self.temperature = 1
         self.expert_width = self.config.ffn_hidden_size // self.config.dsparse_nblocks
         self.normalize_mask = self.config.dsparse_normalize_mask
-        print(f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}")
+        print(
+            f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}"
+        )
 
     def forward(self, hidden_states):
 
@@ -256,22 +263,27 @@ class MLPDShard(MLP):
             else:
                 intermediate_parallel = self.activation_func(intermediate_parallel)
 
-        # mask is [s, b, nblocks] 
+        # mask is [s, b, nblocks]
         mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)
         s, b, nblocks = mask_logits.shape
-        mask_logits = mask_logits.view(s*b, nblocks) # [s*b, nblocks]
+        mask_logits = mask_logits.view(s * b, nblocks)  # [s*b, nblocks]
 
-        sm_mask = torch.softmax(mask_logits / self.temperature, dim=1) # softmax over experts
-        # TODO: we do this so that we approximate the normal model, but should I 
+        sm_mask = torch.softmax(mask_logits / self.temperature, dim=1)  # softmax over experts
+        # TODO: we do this so that we approximate the normal model, but should I
         # slowly temperature this out?
-        if self.normalize_mask: # TODO should I try this after topk?
-            sm_mask = sm_mask / sm_mask.mean(dim=0) 
+        if self.normalize_mask:  # TODO should I try this after topk?
+            sm_mask = sm_mask / sm_mask.mean(dim=0)
 
-        vals, ind = sm_mask.topk(self.experts_per_token, dim=1) # take top k per token
+        vals, ind = sm_mask.topk(self.experts_per_token, dim=1)  # take top k per token
         mask = torch.zeros_like(mask_logits)
         mask.scatter_(1, ind, vals)
-        mask = mask.repeat_interleave(self.expert_width, dim=1) # [s*b, dff]
+        mask = mask.repeat_interleave(self.expert_width, dim=1)  # [s*b, dff]
+        #tp_size = intermediate_parallel.shape[-1]
+        #rank = parallel_state.get_tensor_model_parallel_rank()
 
+        #intermediate_parallel *= mask.view(intermediate_parallel.shape)[
+        #    ..., tp_size * rank : tp_size * (rank + 1)
+        #]
         intermediate_parallel *= mask.view(intermediate_parallel.shape)
 
         # [s, b, h]

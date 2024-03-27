@@ -70,6 +70,7 @@ class TransformerConfig(ModelParallelConfig):
             dsparse_factor (int or None): If not None, use 1/dsparse_factor sparsity in the mlp layers. Defaults to None.
             dsparse_nblocks (int or None): If None and dsparse_factor is set, uses ffn_hidden_size blocks. Defaults to None.
             dsparse_normalize_mask (bool): If true, normalizes the dsparse mask to have unit mean per token
+            dsparse_router_init_method (Callable): Method that initializes the router weights. Defaults to init_method.
     """
 
     # model architecture
@@ -148,6 +149,7 @@ class TransformerConfig(ModelParallelConfig):
     dsparse_factor: int = None
     dsparse_nblocks: int = None
     dsparse_normalize_mask: bool = False
+    dsparse_router_init_method: Callable = None
     # These 2 attributes are WAR for TRTLLM export. DO NOT USE!! WILL BE DEPRECATED SOON!!
     max_position_embeddings: int = 0
     rotary_percent: float = 0
@@ -184,6 +186,8 @@ class TransformerConfig(ModelParallelConfig):
                 raise ValueError(
                     f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_nblocks: {self.dsparse_nblocks}'
                 )
+            if self.dsparse_router_init_method is None:
+                self.dsparse_router_init_method = self.init_method
             print("Got dsparse config with factor: ", self.dsparse_factor, " and nblocks: ", self.dsparse_nblocks)
 
         if self.kv_channels is None:

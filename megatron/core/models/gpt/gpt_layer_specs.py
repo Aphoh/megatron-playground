@@ -104,7 +104,7 @@ def get_gpt_dsparse_layer_with_transformer_engine_spec(
    use_te: bool = True, 
 ) -> ModuleSpec:
     mlp = _get_dsparse_mlp_module_spec(
-        use_te=True
+        use_te=use_te
     )
     return ModuleSpec(
         module=TransformerLayer,

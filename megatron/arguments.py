@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from megatron.global_vars import set_retro_args, get_retro_args
 from tools.retro.utils import get_args_path as get_retro_args_path
 
+from megatron.core import utils
 from megatron.core.models.retro import RetroConfig
 from megatron.core.transformer import TransformerConfig
 
@@ -500,6 +501,8 @@ def core_transformer_config_from_args(args):
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
+    if args.dsparse_router_init_method == 'const':
+        kw_args['dsparse_router_init_method'] = utils.init_method_constant
     if args.group_query_attention:
         kw_args['num_query_groups'] = args.num_query_groups
     else:
@@ -1522,6 +1525,7 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
     group.add_argument("--dsparse-start-t", type=int, default=None, help="DSparsity start_t for the model")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
+    group.add_argument("--dsparse-router-init-method", type=str, choices=['const', 'std'], default='std', help="DSparsity router init method")
     group.add_argument("--use-parallel-residual", action="store_true", help="Use parallel residual like in PaLM and Pythia")
     group.add_argument('--yaml-cfg', type=str, default=None, 
                        help = 'Config file to add additional arguments')
