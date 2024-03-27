@@ -217,8 +217,13 @@ def pretrain(train_valid_test_dataset_provider,
 
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
+    
+    kwargs = {}
+    if args.dsparse_lr_mult != 1.0:
+        kwargs["scale_lr_cond"] = lambda x: 'shard_mask' in x[0]
+        kwargs["lr_mult"] = args.dsparse_lr_mult
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
-        model_provider, model_type)
+        model_provider, model_type, **kwargs)
 
     timers('model-and-optimizer-setup').stop()
     print_datetime('after model, optimizer, and learning rate '

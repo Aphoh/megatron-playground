@@ -48,6 +48,7 @@ class Arguments:
     ## 1/dsparse_factor is the fraction of the experts each token is routed to
     dsparse_factor: Optional[int] = None
     dsparse_start_t: float = 1.0
+    dsparse_lr_mult: float = 1.0
 
 
 def model_config_from_size(model_size: str) -> dict:
@@ -116,7 +117,8 @@ def parse_args() -> Arguments:
     parser.add_argument("--from-model-size", type=str, help="Starting model size")
     parser.add_argument("--to-model-size", type=str, help="Ending model size")
     parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
-    parser.add_argument("--dsparse-start-t", type=float, default=1.0, help="dsparse factor")
+    parser.add_argument("--dsparse-start-t", type=float, default=1.0, help="dsparse start t")
+    parser.add_argument("--dsparse-lr-mult", type=float, default=1.0, help="dsparse lr mult")
     args = parser.parse_args()
 
     if args.rank is None:
@@ -342,6 +344,7 @@ def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
             args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
         )
         res["dsparse_start_t"] = args.dsparse_start_t
+        res["dsparse_lr_mult"] = args.dsparse_start_t
         res["dsparse_normalize_mask"] = ()
         res["dsparse_finetune"] = ()
         res["dsparse_anneal"] = ()
