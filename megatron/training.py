@@ -392,8 +392,11 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
     # attributes set for them. We should make sure the default attributes
     # are set for all params so the optimizer can use them.
     for model_module in model:
-        for param in model_module.parameters():
+        for name, param in model_module.named_parameters():
             tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+            if args.dsparse_finetune_only_router and "shard_mask" not in name:
+                param.requires_grad = False
+
 
     # Print number of parameters.
     if mpu.get_data_parallel_rank() == 0:

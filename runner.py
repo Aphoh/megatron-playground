@@ -2,7 +2,7 @@ import os
 import subprocess
 import argparse
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from transformers import GPTNeoXConfig
 from huggingface_hub import hf_hub_download
 from filelock import FileLock
@@ -47,8 +47,6 @@ class Arguments:
     to_model_size: Optional[str] = None
     ## 1/dsparse_factor is the fraction of the experts each token is routed to
     dsparse_factor: Optional[int] = None
-    dsparse_start_t: float = 1.0
-    dsparse_lr_mult: float = 1.0
 
 
 def model_config_from_size(model_size: str) -> dict:
@@ -77,7 +75,7 @@ def print_rank_0(args: Arguments, *varargs, **kwargs):
         print(*varargs, **kwargs)
 
 
-def parse_args() -> Arguments:
+def parse_args() -> Tuple[Arguments, list]:
     parser = argparse.ArgumentParser(description='Run a variety of different training tasks')
     parser.add_argument("--name", type=str, help="Name of the run")
     parser.add_argument(
@@ -117,10 +115,7 @@ def parse_args() -> Arguments:
     parser.add_argument("--from-model-size", type=str, help="Starting model size")
     parser.add_argument("--to-model-size", type=str, help="Ending model size")
     parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
-    parser.add_argument("--dsparse-start-t", type=float, default=1.0, help="dsparse start t")
-    parser.add_argument("--dsparse-lr-mult", type=float, default=1.0, help="dsparse lr mult")
-    args = parser.parse_args()
-
+    args, unknown = parser.parse_known_args()
     if args.rank is None:
         args.rank = int(os.environ["MGT_RANK"])
     if args.nnodes is None:
@@ -133,7 +128,11 @@ def parse_args() -> Arguments:
         args.hostnames = [k for v in args.hostnames.split() for k in v.split(",")]
     if args.rdzv_id is None:
         args.rdzv_id = os.environ["MGT_RZDV_ID"]
-    return Arguments(**vars(args))
+
+    if unknown and args.rank == 0:
+        print(f"Got unknown arguments, passing to megatron: {unknown}")
+
+    return Arguments(**vars(args)), unknown
 
 
 def get_model_size(train_args: dict) -> int:
@@ -343,12 +342,6 @@ def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
         print_rank_0(
             args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
         )
-        res["dsparse_start_t"] = args.dsparse_start_t
-        res["dsparse_lr_mult"] = args.dsparse_lr_mult
-        res["dsparse_normalize_mask"] = ()
-        res["dsparse_finetune"] = ()
-        res["dsparse_anneal"] = ()
-        res["dsparse_router_init_method"] = "const"
 
     return res
 
@@ -376,7 +369,8 @@ def get_torchrun_args(args: Arguments) -> dict:
 
 
 def main():
-    args = parse_args()
+    args, downstream_args = parse_args()
+
     if args.run_ldconfig:
         assert subprocess.run(["ldconfig"]).returncode == 0, "ldconfig failed"
 
@@ -404,13 +398,11 @@ def main():
         train_args["micro_batch_size"] = micro_batch_size
 
     # print environment variables
-    print_rank_0(args, f"Running with args: {train_args}", flush=True)
+    res_args = ["torchrun"] + arg_dict_to_list(torchrun_args)+ ["pretrain_gpt.py"]+ arg_dict_to_list(train_args) + downstream_args,
+    print_rank_0(args, f"Running command: {" ".join(res_args)}", flush=True)
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     subprocess.run(
-        ["torchrun"]
-        + arg_dict_to_list(torchrun_args)
-        + ["pretrain_gpt.py"]
-        + arg_dict_to_list(train_args),
+        res_args,
         env=os.environ,
     )
 

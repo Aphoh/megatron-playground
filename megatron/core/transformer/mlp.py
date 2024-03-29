@@ -221,7 +221,7 @@ class MLPDShard(MLP):
             config=self.config,
             init_method=self.config.init_method,
             gather_output=False,
-            bias=False,
+            bias=config.dsparse_bias,
             tp_comm_buffer_name='fc1_shard_mask',
             skip_bias_add=True,
             is_expert=False,
@@ -236,6 +236,9 @@ class MLPDShard(MLP):
         print(
             f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}"
         )
+
+        if self.config.dsparse_bias_init_1:
+            torch.nn.init.constant_(self.linear_fc1_shard_mask.bias, 1.0)
 
     def forward(self, hidden_states):
 

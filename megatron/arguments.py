@@ -437,6 +437,10 @@ def validate_args(args, defaults={}):
             raise RuntimeError('--dsparse-factor must be greater than 0.')
         if args.dsparse_anneal and args.dsparse_start_t is None:
             raise RuntimeError("--dsparse-start-t must be set if --dsparse-anneal is set.")
+        if args.dsparse_finetune_only_router and not args.dsparse_finetune:
+            raise RuntimeError("--dsparse-finetune must be set if --dsparse-finetune-only-router is set.")
+        if args.dsparse_bias_init_1 and not args.dsparse_bias:
+            raise RuntimeError("--dsparse-bias must be set if --dsparse-bias-init-1 is set.")
         
     if args.use_parallel_residual and not args.use_mcore_models:
         raise RuntimeError('--use-parallel-residual only supported with Megatron Core, please add --use-mcore-models.')
@@ -502,7 +506,11 @@ def core_transformer_config_from_args(args):
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
     if args.dsparse_router_init_method == 'const':
-        kw_args['dsparse_router_init_method'] = utils.init_method_constant
+        kw_args['dsparse_router_init_method'] = utils.init_method_constant()
+    elif args.dsparse_router_init_method == 'std':
+        kw_args['dsparse_router_init_method'] = utils.init_method_normal(args.init_method_std)
+    elif args.dsparse_router_init_method == "zero":
+        kw_args['dsparse_router_init_method'] = torch.nn.init.zeros_
     if args.group_query_attention:
         kw_args['num_query_groups'] = args.num_query_groups
     else:
@@ -1522,10 +1530,13 @@ def _add_experimental_args(parser):
     group.add_argument("--dsparse-factor", type=int, default=None, help="DSparsity factor for the model")
     group.add_argument("--dsparse-nblocks", type=int, default=None, help="DSparsity nblocks for the model")
     group.add_argument("--dsparse-finetune", action="store_true", help="Finetune the model with DSparsity")
+    group.add_argument("--dsparse-finetune-only-router", action="store_true", help="Finetune only the router with dsparsity")
     group.add_argument("--dsparse-anneal", action="store_true", help="DSparsity annealing")
     group.add_argument("--dsparse-start-t", type=float, default=None, help="DSparsity start_t for the model")
+    group.add_argument("--dsparse-bias", action="store_true", help="DSparsity bias")
+    group.add_argument("--dsparse-bias-init-1", action="store_true", help="Initialize dsparse bias to 1")
     group.add_argument("--dsparse-normalize-mask", action="store_true", help="normalize DSparsity mask")
-    group.add_argument("--dsparse-router-init-method", type=str, choices=['const', 'std'], default='std', help="DSparsity router init method")
+    group.add_argument("--dsparse-router-init-method", type=str, choices=['const', 'std', 'zero'], default='std', help="DSparsity router init method")
     group.add_argument("--dsparse-lr-mult", type=float, default=1.0, help="DSparse router lr scaling")
     group.add_argument("--use-parallel-residual", action="store_true", help="Use parallel residual like in PaLM and Pythia")
     group.add_argument('--yaml-cfg', type=str, default=None, 

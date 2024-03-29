@@ -71,6 +71,8 @@ class TransformerConfig(ModelParallelConfig):
             dsparse_nblocks (int or None): If None and dsparse_factor is set, uses ffn_hidden_size blocks. Defaults to None.
             dsparse_normalize_mask (bool): If true, normalizes the dsparse mask to have unit mean per token
             dsparse_router_init_method (Callable): Method that initializes the router weights. Defaults to init_method.
+            dsparse_bias (bool): Whether the dsparse act map should have bias
+            dsparse_bias_init_1 (bool): init dsparse bias to 1
     """
 
     # model architecture
@@ -150,6 +152,8 @@ class TransformerConfig(ModelParallelConfig):
     dsparse_nblocks: int = None
     dsparse_normalize_mask: bool = False
     dsparse_router_init_method: Callable = None
+    dsparse_bias: bool = False
+    dsparse_bias_init_1: bool = False
     # These 2 attributes are WAR for TRTLLM export. DO NOT USE!! WILL BE DEPRECATED SOON!!
     max_position_embeddings: int = 0
     rotary_percent: float = 0
@@ -186,9 +190,6 @@ class TransformerConfig(ModelParallelConfig):
                 raise ValueError(
                     f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_nblocks: {self.dsparse_nblocks}'
                 )
-            if self.dsparse_router_init_method is None:
-                self.dsparse_router_init_method = self.init_method
-            print("Got dsparse config with factor: ", self.dsparse_factor, " and nblocks: ", self.dsparse_nblocks)
 
         if self.kv_channels is None:
             self.kv_channels = self.hidden_size // self.num_attention_heads
@@ -289,3 +290,5 @@ class TransformerConfig(ModelParallelConfig):
             self.output_layer_init_method = scaled_init_method_normal(
                 self.init_method_std, self.num_layers
             )
+        if self.dsparse_factor and self.dsparse_router_init_method is None:
+            self.dsparse_router_init_method = self.init_method
