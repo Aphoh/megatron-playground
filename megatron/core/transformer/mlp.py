@@ -219,7 +219,7 @@ class MLPDShard(MLP):
             self.config.hidden_size,
             self.config.dsparse_nblocks,
             config=self.config,
-            init_method=self.config.init_method,
+            init_method=self.config.dsparse_router_init_method,
             gather_output=False,
             bias=config.dsparse_bias,
             tp_comm_buffer_name='fc1_shard_mask',
