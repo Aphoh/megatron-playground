@@ -223,7 +223,7 @@ class MLPDShard(MLP):
             gather_output=False,
             bias=config.dsparse_bias,
             tp_comm_buffer_name='fc1_shard_mask',
-            skip_bias_add=True,
+            skip_bias_add=False,
             is_expert=False,
         )
         if parallel_state.get_tensor_model_parallel_world_size() > 1:

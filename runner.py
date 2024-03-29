@@ -120,15 +120,16 @@ def parse_args() -> Tuple[Arguments, list]:
         args.rank = int(os.environ["MGT_RANK"])
     if args.nnodes is None:
         args.nnodes = int(os.environ["MGT_WORLD_SIZE"])
-    if args.nnodes != 1 and args.gpus_per_node is None:
-        args.gpus_per_node = int(os.environ["MGT_NUM_GPUS"])
-    if args.nnodes != 1 and args.hostnames is None:
-        args.hostnames = os.environ["MGT_HOSTS"]
+    if args.nnodes > 1:
+        if args.gpus_per_node is None:
+            args.gpus_per_node = int(os.environ["MGT_NUM_GPUS"])
+        if args.hostnames is None:
+            args.hostnames = os.environ["MGT_HOSTS"]
+        if args.rdzv_id is None:
+            args.rdzv_id = os.environ["MGT_RZDV_ID"]
+
     if args.hostnames is not None:
         args.hostnames = [k for v in args.hostnames.split() for k in v.split(",")]
-    if args.rdzv_id is None:
-        args.rdzv_id = os.environ["MGT_RZDV_ID"]
-
     if unknown and args.rank == 0:
         print(f"Got unknown arguments, passing to megatron: {unknown}")
 
@@ -398,8 +399,8 @@ def main():
         train_args["micro_batch_size"] = micro_batch_size
 
     # print environment variables
-    res_args = ["torchrun"] + arg_dict_to_list(torchrun_args)+ ["pretrain_gpt.py"]+ arg_dict_to_list(train_args) + downstream_args,
-    print_rank_0(args, f"Running command: {" ".join(res_args)}", flush=True)
+    res_args = ["torchrun"] + arg_dict_to_list(torchrun_args)+ ["pretrain_gpt.py"]+ arg_dict_to_list(train_args) + downstream_args
+    print_rank_0(args, f"Running command: {' '.join(res_args)}", flush=True)
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     subprocess.run(
         res_args,
