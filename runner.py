@@ -28,6 +28,7 @@ class Arguments:
     run_ldconfig: bool = False
     ## model loading
     load_pythia: Optional[str] = None
+    load_pythia_rev: str = "main"
     load_checkpoint: Optional[str] = None
     ## paths
     data_dir: str = "/data"
@@ -80,6 +81,9 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument("--name", type=str, help="Name of the run")
     parser.add_argument(
         '--load-pythia', type=str, default=None, help='Pythia model version to load'
+    )
+    parser.add_argument(
+        "--load-pythia-rev", type=str, default="main", help="Pythia model revision to load"
     )
     parser.add_argument('--data-dir', type=str, default="/data", help='Location to load data')
     parser.add_argument(
@@ -160,14 +164,14 @@ def get_memory_usage(train_args: dict) -> int:
 
 
 def download_pythia(args: Arguments) -> Path:
-    pythia_ckpt_dir = Path(args.checkpoint_dir) / "pythia" / args.load_pythia
+    pythia_ckpt_dir = Path(args.checkpoint_dir) / "pythia" / args.load_pythia / args.load_pythia_rev
     lock_file = Path(args.checkpoint_dir) / "pythia.lock"
     with FileLock(lock_file):
         if not pythia_ckpt_dir.exists():
             # We're the first to get here, download the model
             print(f"Downloading pythia model on rank {args.rank}")
             model_bin_path = hf_hub_download(
-                pythia_repo(args), 'pytorch_model.bin', cache_dir=args.hf_cache_dir
+                pythia_repo(args), 'pytorch_model.bin', revision=args.load_pythia_rev, cache_dir=args.hf_cache_dir
             )
             print(f"Model downloaded to {model_bin_path}")
             print(f"Converting model at {pythia_ckpt_dir}")
@@ -304,45 +308,47 @@ def round_down_to_divisor(k, n):
     return None  # In case no divisor is found which should not happen unless k <= 0
 
 
-def get_dsparse_arguments(args: Arguments, so_far: dict) -> dict:
+def get_dsparse_arguments(args: Arguments, so_far: dict, downstream_args: List[str]) -> dict:
     res = {}
     if args.do_dsparse:
         assert args.dsparse_factor is not None, "dsparse factor must be set"
         res["dsparse_factor"] = args.dsparse_factor
-        from_model_size = model_config_from_size(args.from_model_size)
-        to_model_size = model_config_from_size(args.to_model_size)
-        will_load_size = {
-            "num_layers": so_far["num_layers"],
-            "hidden_size": so_far["hidden_size"],
-            "num_attention_heads": so_far["num_attention_heads"],
-        }
-        assert (
-            from_model_size == will_load_size
-        ), f"Model size mismatch: {from_model_size} != {will_load_size}"
-        num_exp = calc_ideal_num_experts(
-            to_model_size["hidden_size"],
-            from_model_size["hidden_size"],
-            args.dsparse_factor,
-            4,  # TODO: accept this as a hp
-            4,
-            to_model_size["num_layers"],
-            from_model_size["num_layers"],
-            50304,
-        )
-        num_exp = int(round(num_exp))
-        assert num_exp > 1, "Number of experts must be > 1"
-        div_num_exp = round_down_to_divisor(num_exp, 4 * from_model_size["hidden_size"])
-        assert (
-            div_num_exp is not None
-        ), f"num_exp={num_exp}, hidden_size={4*from_model_size['hidden_size']}"
-        res["dsparse_nblocks"] = div_num_exp
-        print_rank_0(
-            args,
-            f"For dsparse factor {args.dsparse_factor} and hidden size {from_model_size['hidden_size']}",
-        )
-        print_rank_0(
-            args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
-        )
+        if "--dsparse-nblocks" not in downstream_args:
+            from_model_size = model_config_from_size(args.from_model_size)
+            to_model_size = model_config_from_size(args.to_model_size)
+            will_load_size = {
+                "num_layers": so_far["num_layers"],
+                "hidden_size": so_far["hidden_size"],
+                "num_attention_heads": so_far["num_attention_heads"],
+            }
+            assert (
+                from_model_size == will_load_size
+            ), f"Model size mismatch: {from_model_size} != {will_load_size}"
+            print_rank_0(args, "Calculating ideal number of experts")
+            num_exp = calc_ideal_num_experts(
+                to_model_size["hidden_size"],
+                from_model_size["hidden_size"],
+                args.dsparse_factor,
+                4,  # TODO: accept this as a hp
+                4,
+                to_model_size["num_layers"],
+                from_model_size["num_layers"],
+                50304,
+            )
+            num_exp = int(round(num_exp))
+            assert num_exp > 1, "Number of experts must be > 1"
+            div_num_exp = round_down_to_divisor(num_exp, 4 * from_model_size["hidden_size"])
+            assert (
+                div_num_exp is not None
+            ), f"num_exp={num_exp}, hidden_size={4*from_model_size['hidden_size']}"
+            res["dsparse_nblocks"] = div_num_exp
+            print_rank_0(
+                args,
+                f"For dsparse factor {args.dsparse_factor} and hidden size {from_model_size['hidden_size']}",
+            )
+            print_rank_0(
+                args, f"ideal num experts={num_exp:.2f}, rounded down to divisor={div_num_exp}"
+            )
 
     return res
 

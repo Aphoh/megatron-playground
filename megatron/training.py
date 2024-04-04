@@ -256,6 +256,13 @@ def pretrain(train_valid_test_dataset_provider,
     timers.log(['model-and-optimizer-setup',
                 'train/valid/test-data-iterators-setup'], barrier=True)
 
+    if args.pre_validate:
+        prefix = 'iteration 0 on validation set'
+        evaluate_and_print_results(prefix, forward_step_func,
+                                   valid_data_iterator, model,
+                                   0, process_non_loss_data_func, config,
+                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=False)
+
     if not args.skip_train:
         print_rank_0('training ...')
 

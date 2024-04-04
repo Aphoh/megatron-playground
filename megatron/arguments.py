@@ -1541,5 +1541,6 @@ def _add_experimental_args(parser):
     group.add_argument("--use-parallel-residual", action="store_true", help="Use parallel residual like in PaLM and Pythia")
     group.add_argument('--yaml-cfg', type=str, default=None, 
                        help = 'Config file to add additional arguments')
+    group.add_argument("--pre-validate", action="store_true", help="Run validation before training")
 
     return parser
