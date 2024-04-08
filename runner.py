@@ -48,6 +48,7 @@ class Arguments:
     to_model_size: Optional[str] = None
     ## 1/dsparse_factor is the fraction of the experts each token is routed to
     dsparse_factor: Optional[int] = None
+    dsparse_nblocks: Optional[int] = None
 
 
 def model_config_from_size(model_size: str) -> dict:
@@ -119,6 +120,7 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument("--from-model-size", type=str, help="Starting model size")
     parser.add_argument("--to-model-size", type=str, help="Ending model size")
     parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
+    parser.add_argument("--dsparse-nblocks", type=int, help="dsparse nblocks")
     args, unknown = parser.parse_known_args()
     if args.rank is None:
         args.rank = int(os.environ["MGT_RANK"])
@@ -313,7 +315,9 @@ def get_dsparse_arguments(args: Arguments, so_far: dict, downstream_args: List[s
     if args.do_dsparse:
         assert args.dsparse_factor is not None, "dsparse factor must be set"
         res["dsparse_factor"] = args.dsparse_factor
-        if "--dsparse-nblocks" not in downstream_args:
+        if args.dsparse_nblocks is not None:
+            res["dsparse_nblocks"] = args.dsparse_nblocks
+        else:
             from_model_size = model_config_from_size(args.from_model_size)
             to_model_size = model_config_from_size(args.to_model_size)
             will_load_size = {
@@ -387,7 +391,7 @@ def main():
         | get_training_arguments(args)
         | get_logging_arguments(args)
     )
-    train_args |= get_dsparse_arguments(args, train_args)
+    train_args |= get_dsparse_arguments(args, train_args, downstream_args)
     torchrun_args = get_torchrun_args(args)
 
     if "micro_batch_size" not in train_args:

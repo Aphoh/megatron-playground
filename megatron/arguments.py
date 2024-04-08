@@ -502,6 +502,9 @@ def core_transformer_config_from_args(args):
         def squared_relu(x):
             return torch.pow(F.relu(x), 2)
         kw_args['activation_func'] = squared_relu
+    if args.relu:
+        assert not args.swiglu and not args.squared_relu
+        kw_args['activation_func'] = F.relu
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
@@ -1542,5 +1545,6 @@ def _add_experimental_args(parser):
     group.add_argument('--yaml-cfg', type=str, default=None, 
                        help = 'Config file to add additional arguments')
     group.add_argument("--pre-validate", action="store_true", help="Run validation before training")
+    group.add_argument("--relu", action="store_true", help="Use ReLU activation function")
 
     return parser
