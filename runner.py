@@ -8,6 +8,7 @@ from huggingface_hub import hf_hub_download
 from filelock import FileLock
 import socket
 from pathlib import Path
+import json
 import torch
 import math
 
@@ -170,18 +171,25 @@ def download_pythia(args: Arguments) -> Path:
     lock_file = Path(args.checkpoint_dir) / "pythia.lock"
     with FileLock(lock_file):
         if not pythia_ckpt_dir.exists():
+            weight_files = []
+            if args.load_pythia in ["6.9b", "12b"]:
+                index = hf_hub_download(pythia_repo(args), "pytorch_model.bin.index.json", revision=args.load_pythia_rev, cache_dir=args.hf_cache_dir)
+                index_contents = json.load(open(index))
+                weight_files = list(set(index_contents["weight_map"].values()))
+            else:
+                weight_files = ["pytorch_model.bin"]
+
+            downloaded_weights = []
+            for weight_file in weight_files:
+                res = hf_hub_download(pythia_repo(args), weight_file, revision=args.load_pythia_rev, cache_dir=args.hf_cache_dir)
+                downloaded_weights.append(res)
+            print(f"Downloaded {len(downloaded_weights)} weights")
             # We're the first to get here, download the model
-            print(f"Downloading pythia model on rank {args.rank}")
-            model_bin_path = hf_hub_download(
-                pythia_repo(args), 'pytorch_model.bin', revision=args.load_pythia_rev, cache_dir=args.hf_cache_dir
-            )
-            print(f"Model downloaded to {model_bin_path}")
-            print(f"Converting model at {pythia_ckpt_dir}")
             res = subprocess.run(
                 [
                     "python",
                     "tools/checkpoint/convert_pythia_ckpt.py",
-                    model_bin_path,
+                    *downloaded_weights,
                     pythia_ckpt_dir,
                 ]
             )

@@ -7,6 +7,10 @@ sys.path.append(os.path.abspath(Path(__file__).parents[2]))
 from megatron.checkpoint_utils import convert_pythia
 
 if __name__ == "__main__":
+    argn = len(sys.argv)
+    ckpt = {}
+    for i in range(1, argn - 1):
+        ckpt |= torch.load(sys.argv[i], map_location="cpu")
     ckpt = torch.load(sys.argv[1], map_location="cpu")
 
     res = convert_pythia(ckpt)
@@ -16,7 +20,7 @@ if __name__ == "__main__":
         print(
             "You should probably make sure that you are using the same rotary base/percent as the original model"
         )
-    output_dir = Path(sys.argv[2])
+    output_dir = Path(sys.argv[-1])
     model_output_dir = output_dir / 'iter_0000001' / 'mp_rank_00/'
     os.makedirs(model_output_dir, exist_ok=True)
     with open(output_dir / 'latest_checkpointed_iteration.txt', 'w') as f:
