@@ -5,7 +5,7 @@ import os
 import sys
 import torch
 from arg_utils import ModelDescriptor
-from transformers import GPTNeoXConfig
+from transformers import GPTNeoXConfig, GPTNeoXTokenizerFast
 from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
 from huggingface_hub.utils import RepositoryNotFoundError, EntryNotFoundError, RevisionNotFoundError
 from typing import Optional
@@ -40,6 +40,7 @@ def load_args_from_checkpoint(args, margs):
     # Read Llama args.
     config = GPTNeoXConfig.from_pretrained(args.repo, revision=args.revision)
     tokenizer_file = hf_hub_download(args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir)
+    tokenizer = GPTNeoXTokenizerFast.from_pretrained(args.repo, revision=args.revision, cache_dir=args.hf_cache_dir)
 
     # Update Megatron args.
     margs.seq_length = config.max_position_embeddings
@@ -59,7 +60,7 @@ def load_args_from_checkpoint(args, margs):
     margs.bf16 = config.torch_dtype == "bfloat16"
     margs.normalization = "LayerNorm"
     margs.untie_embeddings_and_output_weights = not config.tie_word_embeddings
-    margs.vocab_size = config.vocab_size
+    margs.vocab_size = tokenizer.vocab_size
     margs.ffn_hidden_size = config.intermediate_size
     margs.init_method_std = config.initializer_range
     if config.hidden_act == "relu":

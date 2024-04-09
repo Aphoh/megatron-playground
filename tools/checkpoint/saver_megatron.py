@@ -9,6 +9,8 @@ import sys
 import torch
 
 
+
+
 def add_arguments(parser):
     group = parser.add_argument_group(title='Megatron saver')
 
@@ -68,6 +70,37 @@ def save_checkpoint(queue, args):
             print("Exiting. If you want to ignore this, use the argument --no-checking.")
             exit(1)
 
+    
+    def do_vocab_padding(md: ModelDescriptor, orig_word_embed: torch.Tensor, margs):
+        # Deal with padding
+        full_word_embed = None
+        if md.true_vocab_size is not None:
+            # figure out what our padded vocab size is
+            orig_vocab_size = orig_word_embed.shape[0]
+            margs.padded_vocab_size = _vocab_size_with_padding(md.true_vocab_size, margs)
+
+            # Cut out extra padding we don't need
+            if orig_vocab_size > margs.padded_vocab_size:
+                full_word_embed = orig_word_embed[0:margs.padded_vocab_size,:]
+
+            # Expanding embedding to larger size by replicating final entry
+            elif orig_vocab_size < margs.padded_vocab_size:
+                padding_size = margs.padded_vocab_size - orig_vocab_size
+
+                full_word_embed = torch.cat((
+                    orig_word_embed,
+                    orig_word_embed[-1].unsqueeze(0).expand(padding_size, -1)))
+
+            # Same size!
+            else:
+                full_word_embed = orig_word_embed
+        else:
+            print("Original vocab size not specified, leaving embedding table as-is. "
+                "If you've changed the tensor parallel size this could cause problems.")
+            margs.padded_vocab_size = orig_word_embed.shape[0]
+            full_word_embed = orig_word_embed
+        return full_word_embed
+
 
     md: ModelDescriptor = queue_get()
 
@@ -106,7 +139,7 @@ def save_checkpoint(queue, args):
                 '--no-save-rng',
                 '--no-initialization',
                 '--save-interval', '1',
-                '--use-mcore-models'
+                '--use-mcore-models',
                 '--save', args.save_dir
                 ]
 
@@ -185,16 +218,20 @@ def save_checkpoint(queue, args):
     else:
         raise Exception(f'unrecognized model type: {args.model_type}')
 
+    mpu.set_tensor_model_parallel_world_size(args.target_tensor_parallel_size)
+    mpu.set_pipeline_model_parallel_world_size(args.target_pipeline_parallel_size)
+    mpu._set_global_memory_buffer()
+    mpu.set_tensor_model_parallel_rank(0)
+    mpu.set_pipeline_model_parallel_rank(0)
+    fused_kernels.load(margs)
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+    model_parallel_cuda_manual_seed(margs.seed)
+
     def get_models(count, dtype, pre_process, post_process):
         models = [model_provider(pre_process, post_process).to(dtype) for _ in range(count)]
         return models
 
     # fake initializing distributed
-    mpu.set_tensor_model_parallel_world_size(args.target_tensor_parallel_size)
-    mpu.set_pipeline_model_parallel_world_size(args.target_pipeline_parallel_size)
-    mpu.set_tensor_model_parallel_rank(0)
-    mpu.set_pipeline_model_parallel_rank(0)
-    fused_kernels.load(margs)
 
     # Embeddings
     #-----------
@@ -207,48 +244,26 @@ def save_checkpoint(queue, args):
     check_message(embeddings_msg)
 
     # Deal with padding
-    if md.true_vocab_size is not None:
-        # figure out what our padded vocab size is
-        orig_vocab_size = orig_word_embed.shape[0]
-        margs.padded_vocab_size = _vocab_size_with_padding(md.true_vocab_size, margs)
-
-        # Cut out extra padding we don't need
-        if orig_vocab_size > margs.padded_vocab_size:
-            full_word_embed = orig_word_embed[0:margs.padded_vocab_size,:]
-
-        # Expanding embedding to larger size by replicating final entry
-        elif orig_vocab_size < margs.padded_vocab_size:
-            padding_size = margs.padded_vocab_size - orig_vocab_size
-
-            full_word_embed = torch.cat((
-                orig_word_embed,
-                orig_word_embed[-1].unsqueeze(0).expand(padding_size, -1)))
-
-        # Same size!
-        else:
-            full_word_embed = orig_word_embed
-    else:
-        print("Original vocab size not specified, leaving embedding table as-is. "
-              "If you've changed the tensor parallel size this could cause problems.")
-        margs.padded_vocab_size = orig_word_embed.shape[0]
-        full_word_embed = orig_word_embed
-
+    full_word_embed_prechunk = do_vocab_padding(md, orig_word_embed, margs)
     # Split into new tensor model parallel sizes
-    out_word_embed = torch.chunk(full_word_embed, args.target_tensor_parallel_size, dim=0)
+    out_word_embed_in = torch.chunk(full_word_embed_prechunk, args.target_tensor_parallel_size, dim=0)
 
     # Make models for first pipeline stage and fill in embeddings
     mpu.set_pipeline_model_parallel_rank(0)
     post_process = args.target_pipeline_parallel_size == 1
     models = get_models(args.target_tensor_parallel_size, md.params_dtype, True, post_process)
     for tp_rank, model in enumerate(models):
-        model.language_model.embedding.word_embeddings.weight.data.copy_(out_word_embed[tp_rank])
+        model.embedding.word_embeddings.weight.data.copy_(out_word_embed_in[tp_rank])
         if pos_embed is not None:
-            model.language_model.embedding.position_embeddings.weight.data.copy_(pos_embed)
+            model.embedding.position_embeddings.weight.data.copy_(pos_embed)
         else:
-            assert not hasattr(model.language_model.embedding, "position_embeddings")
+            # TODO: is this correct for mcore?
+            assert not hasattr(model.embedding, "position_embeddings")
 
     # Transformer layers
     #-------------------
+    blocks = [m.decoder if md.model_type == 'GPT' else m.encoder for m in models]
+    layers = [m.layers for m in blocks]
     total_layer_num = 0
     for pp_rank in range(args.target_pipeline_parallel_size):
         # For later pipeline parallel ranks, make the new models
@@ -257,7 +272,7 @@ def save_checkpoint(queue, args):
             post_process = pp_rank == args.target_pipeline_parallel_size - 1
             models = get_models(args.target_tensor_parallel_size, md.params_dtype, False, post_process)
 
-        for layer in range(len(models[0].language_model.encoder.layers)):
+        for layer in range(len(layers[0])):
             msg = queue_get(f"transformer layer {total_layer_num}")
 
             # duplicated tensors
@@ -295,22 +310,23 @@ def save_checkpoint(queue, args):
 
             # Save them to the model
             for tp_rank in range(args.target_tensor_parallel_size):
-                l = models[tp_rank].language_model.encoder.layers[layer]
-                l.input_norm.weight.data.copy_(input_norm_weight)
-                if md.norm_has_bias:
-                    l.input_norm.bias.data.copy_(input_norm_bias)
-                l.self_attention.query_key_value.weight.data.copy_(qkv_weight[tp_rank])
-                l.self_attention.dense.weight.data.copy_(dense_weight[tp_rank])
-                l.post_attention_norm.weight.data.copy_(post_norm_weight)
-                if md.norm_has_bias:
-                    l.post_attention_norm.bias.data.copy_(post_norm_bias)
-                l.mlp.dense_h_to_4h.weight.data.copy_(mlp_l0_weight[tp_rank])
-                l.mlp.dense_4h_to_h.weight.data.copy_(mlp_l1_weight[tp_rank])
+                l = layers[tp_rank][layer]
+                l.self_attention.linear_qkv.weight.data.copy_(qkv_weight[tp_rank])
+                l.self_attention.linear_proj.weight.data.copy_(dense_weight[tp_rank])
+                l.mlp.linear_fc1.weight.data.copy_(mlp_l0_weight[tp_rank])
+                l.mlp.linear_fc2.weight.data.copy_(mlp_l1_weight[tp_rank])
+
                 if md.bias_linear:
-                    l.self_attention.query_key_value.bias.data.copy_(qkv_bias[tp_rank])
-                    l.self_attention.dense.bias.data.copy_(dense_bias)
-                    l.mlp.dense_h_to_4h.bias.data.copy_(mlp_l0_bias[tp_rank])
-                    l.mlp.dense_4h_to_h.bias.data.copy_(mlp_l1_bias)
+                    l.self_attention.linear_qkv.bias.data.copy_(qkv_bias[tp_rank])
+                    l.self_attention.linear_proj.bias.data.copy_(dense_bias)
+                    l.mlp.linear_fc1.bias.data.copy_(mlp_l0_bias[tp_rank])
+                    l.mlp.linear_fc2.bias.data.copy_(mlp_l1_bias)
+
+                l.self_attention.linear_qkv.layer_norm_weight.data.copy_(input_norm_weight)
+                l.mlp.linear_fc1.layer_norm_weight.data.copy_(post_norm_weight)
+                if md.norm_has_bias:
+                    l.self_attention.linear_qkv.layer_norm_bias.data.copy_(input_norm_bias)
+                    l.mlp.linear_fc1.layer_norm_bias.data.copy_(post_norm_bias)
 
             total_layer_num = total_layer_num + 1
             check_message(msg)
@@ -322,12 +338,14 @@ def save_checkpoint(queue, args):
             if md.norm_has_bias:
                 final_norm_bias = msg.pop("bias")
             for tp_rank in range(args.target_tensor_parallel_size):
-                models[tp_rank].language_model.encoder.final_norm.weight.data.copy_(final_norm_weight)
+                blocks[tp_rank].final_layernorm.weight.data.copy_(final_norm_weight)
                 if md.norm_has_bias:
-                    models[tp_rank].language_model.encoder.final_norm.bias.data.copy_(final_norm_bias)
-                if pp_rank != 0 and not md.output_layer:
-                    # Copy word embeddings to final pipeline rank
-                    models[tp_rank].word_embeddings.weight.data.copy_(out_word_embed[tp_rank])
+                    blocks[tp_rank].final_layernorm.bias.data.copy_(final_norm_bias)
+                # TODO: is pp_rank != 0 correct here? what is this doing???
+                # this assumes no untie-ing, so i'll disable for now
+                #if pp_rank != 0 and not md.output_layer:
+                #    # Copy word embeddings to final pipeline rank
+                #    blocks[tp_rank].output_layer.weight.data.copy_(out_word_embed[tp_rank])
             del final_norm_weight
             if md.norm_has_bias:
                 del final_norm_bias
@@ -335,12 +353,13 @@ def save_checkpoint(queue, args):
 
             if md.output_layer:
                 msg = queue_get("output layer")
-                if not hasattr(models[0].language_model, 'output_layer'):
+                if not hasattr(models[0], 'output_layer'):
                     print("ERROR: got an output layer, but model does not have one")
                     exit(1)
-                output_layer_weight = torch.chunk(msg.pop("weight"), args.target_tensor_parallel_size, dim=0)
+                output_layer_weight = do_vocab_padding(md, msg.pop("weight"), margs)
+                output_layer_weight = torch.chunk(output_layer_weight, args.target_tensor_parallel_size, dim=0)
                 for tp_rank in range(args.target_tensor_parallel_size):
-                    models[tp_rank].language_model.output_layer.weight.data.copy_(output_layer_weight[tp_rank])
+                    models[tp_rank].output_layer.weight.data.copy_(output_layer_weight[tp_rank])
                 del output_layer_weight
                 check_message(msg)
 
