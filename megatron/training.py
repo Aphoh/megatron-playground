@@ -2,6 +2,7 @@
 
 """Pretrain utilities."""
 
+# ruff: noqa: E402
 import gc
 import dataclasses
 from datetime import datetime

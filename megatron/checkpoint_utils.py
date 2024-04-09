@@ -51,9 +51,11 @@ def convert_pythia(state_dict: dict):
         ('gpt_neox.layers.%d.mlp.dense_4h_to_h.bias', 'decoder.layers.%d.mlp.linear_fc2.bias'),
     ]
     maps = [
-        ('gpt_neox.embed_in.weight', 'embedding.word_embeddings.weight'),
         ('gpt_neox.final_layer_norm.weight', 'decoder.final_layernorm.weight'),
         ('gpt_neox.final_layer_norm.bias', 'decoder.final_layernorm.bias'),
+    ]
+    vocabs = [
+        ('gpt_neox.embed_in.weight', 'embedding.word_embeddings.weight'),
         ('embed_out.weight', 'output_layer.weight'),
     ]
     for j in range(num_layers):
@@ -61,6 +63,9 @@ def convert_pythia(state_dict: dict):
             res[b % j] = state_dict.pop(a % j).float()
     for a, b in maps:
         res[b] = state_dict.pop(a).float()
+    for a, b in vocabs:
+        # TODO: the padding should change if tensor parallelism is used
+        res[b] = state_dict.pop(a).float()[:50304] # vocab padding
     remaining_keys = list(state_dict)
     if remaining_keys:
         print_rank_0(f"Unconverted keys: {state_dict.keys()}")
