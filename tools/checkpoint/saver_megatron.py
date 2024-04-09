@@ -106,6 +106,7 @@ def save_checkpoint(queue, args):
                 '--no-save-rng',
                 '--no-initialization',
                 '--save-interval', '1',
+                '--use-mcore-models'
                 '--save', args.save_dir
                 ]
 
@@ -131,7 +132,7 @@ def save_checkpoint(queue, args):
     margs = parse_args()
 
 
-    if hasattr (md, 'checkpoint_args'):
+    if md.checkpoint_args:
         # These are arguments that we are either changing, or cause problems for validation if they are set
         # Note that some of these deal with T5 so will need to be changed if we support T5.
         args_to_keep = ['tensor_model_parallel_size', 'pipeline_model_parallel_size', 'world_size', 'params_dtype',
@@ -149,7 +150,7 @@ def save_checkpoint(queue, args):
                         'start_weight_decay', 'end_weight_decay']
 
 
-        for arg, value in vars(md.checkpoint_args).items():
+        for arg, value in md.checkpoint_args.items():
             if arg in args_to_keep:
                 continue
             if not hasattr(margs, arg):

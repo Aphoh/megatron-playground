@@ -4,8 +4,6 @@ import torch
 
 @dataclass
 class ModelDescriptor:
-    previous_tensor_parallel_size: Optional[int] = 1
-    previous_pipeline_parallel_size: Optional[int] = 1
     num_layers: int
     hidden_size: int
     seq_length: int
@@ -23,6 +21,10 @@ class ModelDescriptor:
     true_vocab_size: Optional[int]
     norm_has_bias: bool
     swiglu: bool
-    checkpoint_args: Optional[any]
+    checkpoint_args: dict
     consumed_train_samples: Optional[int]
     consumed_valid_samples: Optional[int]
+    iteration: Optional[int]
+
+    previous_tensor_parallel_size: Optional[int] = 1
+    previous_pipeline_parallel_size: Optional[int] = 1

@@ -8,7 +8,7 @@ from arg_utils import ModelDescriptor
 from transformers import GPTNeoXConfig
 from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
 from huggingface_hub.utils import RepositoryNotFoundError, EntryNotFoundError, RevisionNotFoundError
-from types import Optional
+from typing import Optional
 
 
 def file_exists(
@@ -76,7 +76,7 @@ def load_pythia_state_dict(args):
 
     # Load Huggingface model.
     weight_files = []
-    if args.load_pythia in ["6.9b", "12b"]:
+    if file_exists(args.repo, "pytorch_model.bin.index.json", revision=args.revision):
         index = hf_hub_download(args.repo, "pytorch_model.bin.index.json", revision=args.revision, cache_dir=args.hf_cache_dir)
         index_contents = json.load(open(index))
         weight_files.extend(list(set(index_contents["weight_map"].values())))
@@ -130,6 +130,7 @@ def _load_checkpoint(queue, args):
                 '--no-save-rng',
                 '--no-initialization',
                 '--tokenizer-type', 'HFTokenizer',
+                '--use-mcore-models',
                 '--load', args.load_dir
                 ]
 
@@ -210,7 +211,7 @@ def _load_checkpoint(queue, args):
         previous_pipeline_parallel_size=pp_size,
         true_vocab_size=margs.vocab_size,  # Indicates skipping padding in saver
         make_vocab_size_divisible_by=None,
-        checkpoint_args=dict(margs),  # Assuming margs can be directly converted or you adjust as needed
+        checkpoint_args=vars(margs),  # Assuming margs can be directly converted or you adjust as needed
         consumed_train_samples=0,
         consumed_valid_samples=0
     )
@@ -241,8 +242,8 @@ def _load_checkpoint(queue, args):
         message["input norm weight"] =  prefix + 'input_layernorm.weight'
         message["post norm weight"] = prefix + 'post_attention_layernorm.weight'
         if md.norm_has_bias:
-            message["input norm bias"] = 'gpt_neox.layers.%d.input_layernorm.bias'
-            message["post norm bias"] = 'gpt_neox.layers.%d.post_attention_layernorm.bias'
+            message["input norm bias"] = prefix + 'input_layernorm.bias'
+            message["post norm bias"] = prefix + 'post_attention_layernorm.bias'
 
         assert not md.swiglu, "For now, no swiglu :)"
         message["mlp l0 weight"] = prefix + 'mlp.dense_h_to_4h.weight'
