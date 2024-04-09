@@ -1,0 +1,28 @@
+from dataclasses import dataclass
+from typing import Optional
+import torch
+
+@dataclass
+class ModelDescriptor:
+    previous_tensor_parallel_size: Optional[int] = 1
+    previous_pipeline_parallel_size: Optional[int] = 1
+    num_layers: int
+    hidden_size: int
+    seq_length: int
+    num_attention_heads: int
+    max_position_embeddings: int
+    position_embedding_type: str
+    tokenizer_type: str
+    make_vocab_size_divisible_by: Optional[int]
+    params_dtype: torch.dtype
+    output_layer: bool
+    bias_linear: bool
+    qkv_bias: bool
+    model_type: str
+    bert_binary_head: Optional[bool]
+    true_vocab_size: Optional[int]
+    norm_has_bias: bool
+    swiglu: bool
+    checkpoint_args: Optional[any]
+    consumed_train_samples: Optional[int]
+    consumed_valid_samples: Optional[int]

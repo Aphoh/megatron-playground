@@ -11,7 +11,6 @@ if __name__ == "__main__":
     ckpt = {}
     for i in range(1, argn - 1):
         ckpt |= torch.load(sys.argv[i], map_location="cpu")
-    ckpt = torch.load(sys.argv[1], map_location="cpu")
 
     res = convert_pythia(ckpt)
     a = ckpt.get("gpt_neox.layers.0.attention.rotary_emb.inv_freq", None)

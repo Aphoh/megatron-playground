@@ -1,7 +1,7 @@
 # Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 
 import argparse
-from collections.abc import Mapping
+from arg_utils import ModelDescriptor
 import concurrent.futures
 import os
 import sys
@@ -65,27 +65,17 @@ def save_checkpoint(queue, args):
             print(f"Unexpected values in {msg_name}:")
             for key in msg.keys():
                 print(f"   {key}")
-            print(f"Exiting. If you want to ignore this, use the argument --no-checking.")
+            print("Exiting. If you want to ignore this, use the argument --no-checking.")
             exit(1)
 
 
-    md = queue_get()
+    md: ModelDescriptor = queue_get()
 
     if args.target_tensor_parallel_size is None:
-        if hasattr(md, 'previous_tensor_parallel_size'):
-            args.target_tensor_parallel_size = md.previous_tensor_parallel_size
-        else:
-            print("loader did not provide a tensor parallel size and --target-tensor-parallel-size not provided on command line. "
-                  "Default to 1.")
-            args.target_tensor_parallel_size = 1
+        args.target_tensor_parallel_size = md.previous_tensor_parallel_size
 
     if args.target_pipeline_parallel_size is None:
-        if hasattr(md, 'previous_pipeline_parallel_size'):
-            args.target_pipeline_parallel_size = md.previous_pipeline_parallel_size
-        else:
-            print("loader did not provide a pipeline parallel size and --target-pipeline-parallel-size not provided on command line. "
-                  "Default to 1.")
-            args.target_pipeline_parallel_size = 1
+        args.target_pipeline_parallel_size = md.previous_pipeline_parallel_size
 
 
     # Arguments do sanity checks on the world size, but we don't care,
@@ -128,8 +118,12 @@ def save_checkpoint(queue, args):
 
     if md.output_layer:
         sys.argv.append('--untie-embeddings-and-output-weights')
-    if not md.linear_bias:
+    if not md.bias_linear:
         sys.argv.append('--disable-bias-linear')
+        if md.qkv_bias:
+            sys.argv.append('--add-qkv-bias')
+    elif not md.qkv_bias:
+        raise ValueError("Cannot have linear bias without qkv bias")
 
     if md.model_type == 'BERT' and not md.bert_binary_head:
         sys.argv.append('--bert-no-binary-head')
@@ -272,7 +266,7 @@ def save_checkpoint(queue, args):
             post_norm_weight = msg.pop("post norm weight")
             if md.norm_has_bias:
                 post_norm_bias = msg.pop("post norm bias")
-            if md.linear_bias:
+            if md.bias_linear:
                 dense_bias = msg.pop("dense bias")
                 mlp_l1_bias = msg.pop("mlp l1 bias")
 
@@ -289,7 +283,7 @@ def save_checkpoint(queue, args):
             else:
                 mlp_l0_weight = torch.chunk(msg.pop("mlp l0 weight"), args.target_tensor_parallel_size, dim=0)
 
-            if md.linear_bias:
+            if md.bias_linear:
                 qkv_bias = torch.chunk(msg.pop("qkv bias"), args.target_tensor_parallel_size, dim=0)
                 if md.swiglu:
                     mlp_l0_bias_W = torch.chunk(msg.pop("mlp l0 bias W"), args.target_tensor_parallel_size, dim=0)
@@ -311,7 +305,7 @@ def save_checkpoint(queue, args):
                     l.post_attention_norm.bias.data.copy_(post_norm_bias)
                 l.mlp.dense_h_to_4h.weight.data.copy_(mlp_l0_weight[tp_rank])
                 l.mlp.dense_4h_to_h.weight.data.copy_(mlp_l1_weight[tp_rank])
-                if md.linear_bias:
+                if md.bias_linear:
                     l.self_attention.query_key_value.bias.data.copy_(qkv_bias[tp_rank])
                     l.self_attention.dense.bias.data.copy_(dense_bias)
                     l.mlp.dense_h_to_4h.bias.data.copy_(mlp_l0_bias[tp_rank])
