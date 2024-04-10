@@ -1330,14 +1330,14 @@ def evaluate_and_print_results(prefix, forward_step_func,
                     iteration)
 
     if extra_log_dict and 'bins' in extra_log_dict:
-        bins = extra_log_dict.pop(['bins']).cpu().float().numpy()
+        bins = extra_log_dict.pop('bins').cpu().float().numpy()
         if writer:
             gt0s = []
             for key, hist in extra_log_dict.items():
                 gt0_idx = bins.shape[0] // 2
                 gt0 = (hist[gt0_idx:].sum() / hist.sum()).item()
                 gt0s.append(gt0)
-                writer.add_scalar(f'{key} gt0', gt0, iteration)
+                writer.add_scalar(f'{loss_type} {key} gt0', gt0, iteration)
                 if wandb_writer and is_last_rank():
                     import wandb
                     wandb_writer.log(
