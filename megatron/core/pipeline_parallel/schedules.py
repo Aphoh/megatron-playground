@@ -10,6 +10,7 @@ from megatron.core import parallel_state
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
+from megatron.core.transformer.mlp import EffLossScaler
 from megatron.core.utils import get_attr_wrapped_model, get_model_config, get_model_type
 
 # Types
@@ -219,6 +220,9 @@ def forward_step(
         )
         # Set the loss scale
         MoEAuxLossAutoScaler.set_loss_scale(loss_scale / num_microbatches)
+
+    if hasattr(config, "mlp_eff_loss") and config.mlp_eff_loss:
+        EffLossScaler.set_loss_scale(torch.tensor(1.0, device=output_tensor.device)/ num_microbatches)
 
     # If T5 model (or other model with encoder and decoder)
     # and in decoder stack, then send encoder_hidden_state

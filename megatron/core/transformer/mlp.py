@@ -19,6 +19,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.tensor_parallel import ColumnParallelLinear
 import megatron.core.tensor_parallel as tp
+import megatron.core.activations as mact
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 
@@ -27,6 +28,69 @@ from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 class MLPSubmodules:
     linear_fc1: Union[ModuleSpec, type] = None
     linear_fc2: Union[ModuleSpec, type] = None
+
+class EffLossScaler(torch.autograd.Function):
+    loss_scale: torch.Tensor = torch.tensor(1.0)
+
+    @staticmethod
+    def forward(ctx, output: torch.Tensor, loss: torch.Tensor):
+        ctx.save_for_backward(loss)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (loss,) = ctx.saved_tensors
+        scaled_loss_grad = torch.ones_like(loss) * EffLossScaler.loss_scale
+        return grad_output, scaled_loss_grad
+
+    @staticmethod
+    def set_loss_scale(scale: torch.Tensor):
+        EffLossScaler.loss_scale = scale
+
+@torch.compile
+def compute_eff_loss(logits: torch.Tensor):
+    return logits.sigmoid().square().mean()
+
+class MLPActivation(MegatronModule):
+    def __init__(self, config: TransformerConfig):
+        super().__init__(config=config)
+
+        self.activation_func = config.activation_func
+
+    def apply_eff_loss(self, intermediate_parallel: torch.Tensor) -> torch.Tensor:
+        if self.config.mlp_eff_loss:
+            eff_loss = self.config.mlp_eff_loss * compute_eff_loss(intermediate_parallel)
+            return EffLossScaler.apply(intermediate_parallel, eff_loss)
+        return intermediate_parallel
+
+    def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
+        if self.config.bias_activation_fusion:
+            assert not self.config.mlp_eff_loss, "Eff loss not supported with bias activation fusion"
+            assert not self.report_preactivations, "Pre-activations not supported with bias activation fusion"
+            if self.activation_func == mact.gelu_approx:
+                assert self.config.add_bias_linear is True
+                intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)
+            elif self.activation_func == mact.gelu_exact:
+                intermediate_parallel = mact.bias_gelu_exact(intermediate_parallel, bias_parallel)
+            elif self.activation_func == mact.silu and self.config.gated_linear_unit:
+                intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
+            else:
+                raise ValueError("Only support fusion of gelu and swiglu")
+        else:
+            if bias_parallel is not None:
+                intermediate_parallel = intermediate_parallel + bias_parallel
+            if self.config.gated_linear_unit:
+
+                def glu(x):
+                    x = torch.chunk(x, 2, dim=-1)
+                    x0 = self.apply_eff_loss(x[0])
+                    return self.config.activation_func(x0) * x[1]
+
+                intermediate_parallel = glu(intermediate_parallel)
+            else:
+                intermediate_parallel = self.apply_eff_loss(intermediate_parallel)
+                intermediate_parallel = self.activation_func(intermediate_parallel)
+        return intermediate_parallel
 
 
 class MLP(MegatronModule):
@@ -77,7 +141,7 @@ class MLP(MegatronModule):
             tp_comm_buffer_name='fc1',
         )
 
-        self.activation_func = self.config.activation_func
+        self.activation_func = MLPActivation(config)
 
         self.linear_fc2 = build_module(
             submodules.linear_fc2,
@@ -96,27 +160,7 @@ class MLP(MegatronModule):
 
         # [s, b, 4 * h/p]
         intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
-
-        if self.config.bias_activation_fusion:
-            if self.activation_func == F.gelu:
-                assert self.config.add_bias_linear is True
-                intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)
-            elif self.activation_func == F.silu and self.config.gated_linear_unit:
-                intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
-            else:
-                raise ValueError("Only support fusion of gelu and swiglu")
-        else:
-            if bias_parallel is not None:
-                intermediate_parallel = intermediate_parallel + bias_parallel
-            if self.config.gated_linear_unit:
-
-                def glu(x):
-                    x = torch.chunk(x, 2, dim=-1)
-                    return self.config.activation_func(x[0]) * x[1]
-
-                intermediate_parallel = glu(intermediate_parallel)
-            else:
-                intermediate_parallel = self.activation_func(intermediate_parallel)
+        intermediate_parallel = self.activation_func(intermediate_parallel, bias_parallel)
 
         # [s, b, h]
         output, output_bias = self.linear_fc2(intermediate_parallel)
@@ -245,26 +289,7 @@ class MLPDShard(MLP):
         # [s, b, 4 * h/p]
         intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
 
-        if self.config.bias_activation_fusion:
-            if self.activation_func == F.gelu:
-                assert self.config.add_bias_linear is True
-                intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)
-            elif self.activation_func == F.silu and self.config.gated_linear_unit:
-                intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
-            else:
-                raise ValueError("Only support fusion of gelu and swiglu")
-        else:
-            if bias_parallel is not None:
-                intermediate_parallel = intermediate_parallel + bias_parallel
-            if self.config.gated_linear_unit:
-
-                def glu(x):
-                    x = torch.chunk(x, 2, dim=-1)
-                    return self.config.activation_func(x[0]) * x[1]
-
-                intermediate_parallel = glu(intermediate_parallel)
-            else:
-                intermediate_parallel = self.activation_func(intermediate_parallel)
+        intermediate_parallel = self.compute_activation(intermediate_parallel, bias_parallel)
 
         # mask is [s, b, nblocks]
         mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)

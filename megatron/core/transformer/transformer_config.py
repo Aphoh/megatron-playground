@@ -3,6 +3,7 @@
 import types
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
+import megatron.core.activations as mact
 
 import torch
 import torch.nn.functional as F
@@ -31,7 +32,7 @@ class TransformerConfig(ModelParallelConfig):
             add_bias_linear (bool): Include a bias term in all linear layers (QKV projections, after core attention, and two in MLP layer). Default is True.
             add_qkv_bias (bool): Add a bias term only for QKV projections. Default is False.
             gated_linear_unit (bool): Use a gated linear unit for the first linear layer in the MLP. Defaults to False.
-            activation_func (Callable): Activation function to use for the non-linearity in the MLP. Defaults to F.gelu.
+            activation_func (Callable): Activation function to use for the non-linearity in the MLP. Defaults to gelu_approx.
             num_moe_experts (int): Number of experts to use for MoE layer. When set, it replaces MLP with MoE layer. Defaults to None (no MoE).
             rotary_interleaved (bool): True is rotate pairs of even and odd dimensions (RoFormer style), False is rotate pairs of first half and second half (LLaMa style). Default to False.
             init_method (Callable): Method to initialize weights. Note that bias is always set to zero. Should be a function that takes a single Tensor and initializes it. Defaults to megatron.core.utils.init_method_normal(init_method_std) which is torch nn init normal with mean=0.0 and std=init_method_Std.
@@ -73,6 +74,7 @@ class TransformerConfig(ModelParallelConfig):
             dsparse_router_init_method (Callable): Method that initializes the router weights. Defaults to init_method.
             dsparse_bias (bool): Whether the dsparse act map should have bias
             dsparse_bias_init_1 (bool): init dsparse bias to 1
+            mlp_eff_loss: (float): Loss coefficient for the MLP efficiency loss. Defaults to 0.0.
     """
 
     # model architecture
@@ -93,7 +95,7 @@ class TransformerConfig(ModelParallelConfig):
     add_bias_linear: bool = True
     add_qkv_bias: bool = False
     gated_linear_unit: bool = False
-    activation_func: Callable = F.gelu
+    activation_func: Callable = mact.gelu_approx
     num_moe_experts: int = None
     rotary_interleaved: bool = False
     window_size: Optional[Tuple[int, int]] = None
@@ -154,6 +156,7 @@ class TransformerConfig(ModelParallelConfig):
     dsparse_router_init_method: Callable = None
     dsparse_bias: bool = False
     dsparse_bias_init_1: bool = False
+    mlp_eff_loss: bool = None
     # These 2 attributes are WAR for TRTLLM export. DO NOT USE!! WILL BE DEPRECATED SOON!!
     max_position_embeddings: int = 0
     rotary_percent: float = 0
@@ -272,16 +275,16 @@ class TransformerConfig(ModelParallelConfig):
             self.attention_softmax_in_fp32 = True
 
         if self.bias_activation_fusion:
-            if self.activation_func not in [F.gelu, F.silu]:
+            if self.activation_func not in [mact.gelu_exact, mact.gelu_approx, mact.silu]:
                 raise ValueError(
                     "When bias_activation_fusion is True, activation function should be either gelu or swiglu"
                 )
-            if self.activation_func == F.gelu and not self.add_bias_linear:
+            if self.activation_func in [mact.gelu_exact, mact.gelu_approx] and not self.add_bias_linear:
                 raise ValueError(
                     "When bias_activation_fusion is True and activation function is gelu, add_bias_linear must also be True."
                 )
         if self.apply_rope_fusion and self.rotary_interleaved:
-            raise ValueError(f'rotary_interleaved does not work with apply_rope_fusion.')
+            raise ValueError('rotary_interleaved does not work with apply_rope_fusion.')
 
         if self.init_method is None:
             self.init_method = init_method_normal(self.init_method_std)

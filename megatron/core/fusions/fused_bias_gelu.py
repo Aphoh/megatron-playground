@@ -3,6 +3,7 @@
 import torch
 
 from megatron.core.jit import jit_fuser
+import torch.nn.functional as F
 
 ###### BIAS GELU FUSION/ NO AUTOGRAD ################
 # 1/sqrt(2*pi)-> 0.3989423
@@ -46,5 +47,17 @@ class GeLUFunction(torch.autograd.Function):
         tmp = bias_gelu_back(grad_output, bias, input)
         return tmp, tmp
 
+@jit_fuser
+def bias_gelu_exact(bias, y):
+    x = bias + y
+    return F.gelu(x)
+
+@jit_fuser
+def gelu_exact(y):
+    return F.gelu(y, approximate="none")
+
+@jit_fuser
+def gelu_approx(y):
+    return F.gelu(y, approximate="tanh")
 
 bias_gelu_impl = GeLUFunction.apply

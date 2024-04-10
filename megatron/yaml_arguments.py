@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from megatron.global_vars import set_retro_args, get_retro_args
 from tools.retro.utils import get_args_path as get_retro_args_path
 
+import megatron.core.activations as mact
 from megatron.core.models.retro import RetroConfig
 from megatron.core.transformer import TransformerConfig
 
@@ -436,7 +437,7 @@ def core_transformer_config_from_yaml(args, transfomer_key = "language_model"):
     
     assert args.activation_func in ["swiglu","squaredrelu","gelu"], f"{args.activation_func} is not a supported activation function"
     if args.activation_func == "swiglu":
-        kw_args['activation_func'] = F.silu
+        kw_args['activation_func'] = mact.silu
         kw_args['gated_linear_unit'] = True
         kw_args['bias_activation_fusion'] = args.bias_swiglu_fusion
     elif args.activation_func == "squaredrelu":

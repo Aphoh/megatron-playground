@@ -14,6 +14,7 @@ from megatron.global_vars import set_retro_args, get_retro_args
 from tools.retro.utils import get_args_path as get_retro_args_path
 
 from megatron.core import utils
+import megatron.core.activations as mact
 from megatron.core.models.retro import RetroConfig
 from megatron.core.transformer import TransformerConfig
 
@@ -492,7 +493,7 @@ def core_transformer_config_from_args(args):
     kw_args['num_moe_experts'] = args.num_experts
     kw_args['rotary_interleaved'] = args.rotary_interleaved
     if args.swiglu:
-        kw_args['activation_func'] = F.silu
+        kw_args['activation_func'] = mact.silu
         kw_args['gated_linear_unit'] = True
         kw_args['bias_activation_fusion'] = args.bias_swiglu_fusion
     elif not args.squared_relu and not args.relu:
@@ -505,6 +506,9 @@ def core_transformer_config_from_args(args):
     if args.relu:
         assert not args.swiglu and not args.squared_relu
         kw_args['activation_func'] = F.relu
+    if args.gelu_exact:
+        assert not args.relu and not args.swiglu and not args.squared_relu
+        kw_args['activation_func'] = mact.gelu_exact
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
@@ -1546,5 +1550,8 @@ def _add_experimental_args(parser):
                        help = 'Config file to add additional arguments')
     group.add_argument("--pre-validate", action="store_true", help="Run validation before training")
     group.add_argument("--relu", action="store_true", help="Use ReLU activation function")
+    group.add_argument("--gelu-exact", action="store_true", help="Use ReLU activation function")
+    group.add_argument("--log-activation-sparsity", action="store_true", help="Log activation sparsity")
+    group.add_argument("--mlp-eff-loss", default=None, type=float, action="store_true", help="Mlp eff loss")
 
     return parser
