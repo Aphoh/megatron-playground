@@ -1342,7 +1342,7 @@ def evaluate_and_print_results(prefix, forward_step_func,
                     import wandb
                     wandb_writer.log(
                         {
-                            key: wandb.Histogram(np_histogram=(bins, hist.cpu().numpy())),
+                            key: wandb.Histogram(np_histogram=(hist.cpu().numpy(), bins)),
                             f'{key} gt0': gt0
                         }, iteration
                     )

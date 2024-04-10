@@ -79,7 +79,7 @@ def print_rank_0(args: Arguments, *varargs, **kwargs):
 
 
 def parse_args() -> Tuple[Arguments, list]:
-    parser = argparse.ArgumentParser(description='Run a variety of different training tasks')
+    parser = argparse.ArgumentParser(description='Run a variety of different training tasks', allow_abbrev=False)
     parser.add_argument("--name", type=str, help="Name of the run")
     parser.add_argument(
         '--load-pythia', type=str, default=None, help='Pythia model version to load'

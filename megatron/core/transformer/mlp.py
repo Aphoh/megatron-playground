@@ -66,7 +66,6 @@ class MLPActivation(MegatronModule):
     def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
         if self.config.bias_activation_fusion:
             assert not self.config.mlp_eff_loss, "Eff loss not supported with bias activation fusion"
-            assert not self.report_preactivations, "Pre-activations not supported with bias activation fusion"
             if self.activation_func == mact.gelu_approx:
                 assert self.config.add_bias_linear is True
                 intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)

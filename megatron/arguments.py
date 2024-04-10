@@ -509,6 +509,9 @@ def core_transformer_config_from_args(args):
     if args.gelu_exact:
         assert not args.relu and not args.swiglu and not args.squared_relu
         kw_args['activation_func'] = mact.gelu_exact
+
+    if args.mlp_eff_loss:
+        kw_args["bias_activation_fusion"] = False
     if args.init_method_xavier_uniform:
         kw_args['init_method'] = torch.nn.init.xavier_uniform_
         kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
@@ -1552,6 +1555,6 @@ def _add_experimental_args(parser):
     group.add_argument("--relu", action="store_true", help="Use ReLU activation function")
     group.add_argument("--gelu-exact", action="store_true", help="Use ReLU activation function")
     group.add_argument("--log-activation-sparsity", action="store_true", help="Log activation sparsity")
-    group.add_argument("--mlp-eff-loss", default=None, type=float, action="store_true", help="Mlp eff loss")
+    group.add_argument("--mlp-eff-loss", type=float, default=None, help="Mlp eff loss")
 
     return parser
