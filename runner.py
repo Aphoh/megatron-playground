@@ -51,12 +51,16 @@ class Arguments:
     dsparse_factor: Optional[int] = None
     dsparse_nblocks: Optional[int] = None
 
+    # Should be bf16, fp16 or fp32
+    dtype: str = "bf16"
+
 
 def model_config_from_size(model_size: str) -> dict:
     # Assumes ffn hidden size of 4*hidden_size
     # num_layers, hidden_size, heads
     sizes = {
-        "14m": (6, 512, 8),
+        "14m": (6, 128, 4),
+        "70m": (6, 512, 8),
         "160m": (12, 768, 12),
         "410m": (24, 1024, 16),
         "1.0b": (16, 2048, 8),
@@ -122,6 +126,7 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument("--to-model-size", type=str, help="Ending model size")
     parser.add_argument("--dsparse-factor", type=int, help="dsparse factor")
     parser.add_argument("--dsparse-nblocks", type=int, help="dsparse nblocks")
+    parser.add_argument("--dtype", type=str, default="bf16", choices=["bf16", "fp16", "fp32"], help="Data type to use")
     args, unknown = parser.parse_known_args()
     if args.rank is None:
         args.rank = int(os.environ["MGT_RANK"])
@@ -265,7 +270,12 @@ def get_model_arch_arguments(args: Arguments) -> dict:
 
 
 def get_training_arguments(args: Arguments) -> dict:
-    res = {"lr": args.learning_rate, "bf16": ()}
+    res = {"lr": args.learning_rate}
+    if args.dtype == "bf16":
+        res["bf16"] = ()
+    elif args.dtype == "fp16":
+        res["fp16"] = ()
+
     if args.load_pythia:
         res["adam_beta1"] = 0.9
         res["adam_beta2"] = 0.95
