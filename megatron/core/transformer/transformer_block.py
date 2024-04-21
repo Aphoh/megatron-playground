@@ -170,10 +170,9 @@ class TransformerBlock(MegatronModule):
 
         if self.post_process and self.post_layer_norm:
             # Final layer norm before output.
-            from megatron.global_vars import get_args
-            args = get_args()
-            NormClass = TENorm if args.transformer_impl == 'transformer_engine' else FusedLayerNorm
-            self.final_layernorm = NormClass(
+            # We don't check transformer-impl because in checkpoint conversion we need
+            # something that supports RMSNorm too.
+            self.final_layernorm = TENorm(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
                 eps=self.config.layernorm_epsilon,

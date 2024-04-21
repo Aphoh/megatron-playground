@@ -155,7 +155,7 @@ def load_pythia_state_dict(args):
     return state_dict
 
 
-def pythia_get_tensor(state_dict, key, layer=None):
+def pythia_get_tensor(state_dict, key, _margs, layer=None):
     prefix = ""
     if layer is not None:
         prefix = f"gpt_neox.layers.{layer}."
@@ -223,23 +223,14 @@ def llama_get_tensor(state_dict, key, margs, layer=None):
         "input norm weight": "input_layernorm.weight",
         "post norm weight": "post_attention_layernorm.weight",
         "mlp l1 weight": "mlp.down_proj.weight",
-        "qkv weight": "attention.query_key_value.weight",  # TODO
+        "mlp l0 weight W": "mlp.gate_proj.weight",
+        "mlp l0 weight V": "mlp.up_proj.weight",
         "dense weight": "self_attn.o_proj.weight",
         "final norm weight": "model.norm.weight",
         "output layer weight": "lm_head.weight",
-    }[key]
+    }
     if key in mapper:
         return state_dict.pop(prefix + mapper[key])
-    elif key == "mlp l0 weight":
-        gate_proj = state_dict.pop(prefix + "mlp.gate_proj.weight")
-        up_proj = state_dict.pop(prefix + "mlp.up_proj.weight")
-        return torch.cat(
-            [
-                gate_proj.weight,
-                up_proj.weight,
-            ],
-            dim=0,
-        )
     elif key == "qkv weight":
         tp = margs.tensor_model_parallel_size
         nh = margs.num_attention_heads // tp
@@ -253,9 +244,9 @@ def llama_get_tensor(state_dict, key, margs, layer=None):
         v_proj = state_dict.pop(prefix + "self_attn.v_proj.weight")
         return torch.cat(
             [
-                q_proj.weight.reshape((ng, dim * nh // ng, -1)),
-                k_proj.weight.reshape((ng, dim, -1)),
-                v_proj.weight.reshape((ng, dim, -1)),
+                q_proj.reshape((ng, dim * nh // ng, -1)),
+                k_proj.reshape((ng, dim, -1)),
+                v_proj.reshape((ng, dim, -1)),
             ],
             dim=1,
         ).reshape((-1, margs.hidden_size))
@@ -385,7 +376,7 @@ def _load_checkpoint(queue, args):
         output_layer=margs.untie_embeddings_and_output_weights,
         position_embedding_type=margs.position_embedding_type,
         bias_linear=margs.add_bias_linear,
-        qkv_bias=margs.add_bias_linear or margs.margs.add_qkv_bias,
+        qkv_bias=margs.add_bias_linear or margs.add_qkv_bias,
         norm_has_bias=margs.normalization == "LayerNorm",
         swiglu=margs.swiglu,
         previous_tensor_parallel_size=tp_size,
@@ -402,7 +393,11 @@ def _load_checkpoint(queue, args):
     # Get first pipe stage.
     mpu.set_tensor_model_parallel_rank(0)
     mpu.set_pipeline_model_parallel_rank(0)
-    state_dict = load_pythia_state_dict(args)
+    state_dict = {}
+    if args.hf_model_type == "llama":
+        state_dict = load_llama_state_dict(args)
+    elif args.hf_model_type == "pythia":
+        state_dict = load_pythia_state_dict(args)
 
     queue.put(md)
 
@@ -414,7 +409,7 @@ def _load_checkpoint(queue, args):
     tensor_getter = pythia_get_tensor if args.hf_model_type == "pythia" else llama_get_tensor
 
     def put_tensor(message, key, layer=None):
-        message[key] = tensor_getter(state_dict, key, layer)
+        message[key] = tensor_getter(state_dict, key, margs, layer)
 
     # Send embeddings.
     message = {}
@@ -430,7 +425,12 @@ def _load_checkpoint(queue, args):
             put_tensor(message, "input norm bias", layer_num)
             put_tensor(message, "post norm bias", layer_num)
 
-        put_tensor(message, "mlp l0 weight", layer_num)
+        if md.swiglu:
+            put_tensor(message, "mlp l0 weight W", layer_num)
+            put_tensor(message, "mlp l0 weight V", layer_num)
+        else:
+            put_tensor(message, "mlp l0 weight", layer_num)
+
         put_tensor(message, "mlp l1 weight", layer_num)
         if md.bias_linear:
             put_tensor(message, "mlp l0 bias", layer_num)
@@ -451,6 +451,7 @@ def _load_checkpoint(queue, args):
         put_tensor(message, "final norm bias")
     queue_put("final norm", message)
 
+    message = {}
     if md.output_layer:
         put_tensor(message, "output layer weight")
         queue_put("output layer", message)

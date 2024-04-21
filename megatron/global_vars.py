@@ -9,7 +9,6 @@ import torch
 from megatron import dist_signal_handler
 from megatron.core import Timers
 from megatron.tokenizer import build_tokenizer
-from megatron.utils import compute_wandb_extras
 from .microbatches import build_num_microbatches_calculator
 
 _GLOBAL_ARGS = None
@@ -185,6 +184,7 @@ def _set_wandb_writer(args):
             raise ValueError("Please specify the tensorboard directory to sync with wandb!")
 
         import wandb
+        from megatron.utils import compute_wandb_extras
         if args.wandb_save_dir:
             save_dir = args.wandb_save_dir
         else:
