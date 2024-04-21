@@ -47,7 +47,7 @@ def add_arguments(parser):
     )
 
 
-def load_llama_args(args):
+def load_llama_args(args, margs):
 
     config = LlamaConfig.from_pretrained(
         args.repo, revision=args.revision, cache_dir=args.hf_cache_dir
@@ -60,29 +60,29 @@ def load_llama_args(args):
     )
 
     # Update Megatron args.
-    args.seq_length = config.max_position_embeddings
-    args.max_position_embeddings = config.max_position_embeddings
-    args.hidden_size = config.hidden_size
-    args.num_attention_heads = config.num_attention_heads
-    args.num_layers = config.num_hidden_layers
-    args.global_batch_size = 1024
-    args.norm_epsilon = config.rms_norm_eps
-    args.iteration = 1  # '0', 'release' don't work
-    args.position_embedding_type = "rope"
-    args.rotary_base = config.rope_theta
-    args.swiglu = True
-    args.tokenizer_type = "HFTokenizer"
-    args.vocab_file = tokenizer_file
-    args.bf16 = True
-    args.normalization = "RMSNorm"
-    args.add_bias_linear = False
-    args.untie_embeddings_and_output_weights = True
-    args.vocab_size = tokenizer.vocab_size
-    args.ffn_hidden_size = config.intermediate_size
+    margs.seq_length = config.max_position_embeddings
+    margs.max_position_embeddings = config.max_position_embeddings
+    margs.hidden_size = config.hidden_size
+    margs.num_attention_heads = config.num_attention_heads
+    margs.num_layers = config.num_hidden_layers
+    margs.global_batch_size = 1024
+    margs.norm_epsilon = config.rms_norm_eps
+    margs.iteration = 1  # '0', 'release' don't work
+    margs.position_embedding_type = "rope"
+    margs.rotary_base = config.rope_theta
+    margs.swiglu = True
+    margs.tokenizer_type = "HFTokenizer"
+    margs.vocab_file = tokenizer_file
+    margs.bf16 = True
+    margs.normalization = "RMSNorm"
+    margs.add_bias_linear = False
+    margs.untie_embeddings_and_output_weights = True
+    margs.vocab_size = tokenizer.vocab_size
+    margs.ffn_hidden_size = config.intermediate_size
 
     if hasattr(config, "num_key_value_heads"):
-        args.group_query_attention = True
-        args.num_query_groups = config.num_key_value_heads
+        margs.group_query_attention = True
+        margs.num_query_groups = config.num_key_value_heads
 
 
 def load_pythia_args(args, margs):
@@ -312,7 +312,7 @@ def _load_checkpoint(queue, args):
     if args.hf_model_type == "pythia":
         load_pythia_args(args, margs)
     elif args.hf_model_type == "llama":
-        load_llama_args(args)
+        load_llama_args(args, margs)
     else:
         print(f"Unknown model type {args.hf_model_type}. Exiting.")
         queue.put("exit")
