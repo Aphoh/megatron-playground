@@ -25,6 +25,7 @@ from megatron.core import mpu
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.model import Float16Module
 from megatron.model.module import param_is_not_shared
+from megatron.arguments import core_transformer_config_from_args
 
 
 ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
@@ -352,3 +353,31 @@ def get_batch_on_this_tp_rank(data_iterator):
        }
 
     return batch
+
+
+def compute_wandb_extras(args):
+    # Group Query Attention.
+    config = core_transformer_config_from_args(args)
+    # MoE.
+    num_experts = 1 if config.num_moe_experts is None else config.num_moe_experts
+    num_ffn_parameters_per_exp = config.num_layers * 2 * config.hidden_size * config.ffn_hidden_size
+    num_ffn_parameters = num_ffn_parameters_per_exp * num_experts
+    num_attn_parameters = 2 * args.num_layers * args.hidden_size * args.hidden_size * (
+        (args.num_query_groups / args.num_attention_heads) + 1
+    )
+
+    embedding_size = args.hidden_size * args.padded_vocab_size
+    if args.untie_embeddings_and_output_weights:
+        num_parameters_in_embedding_layers = 2 * embedding_size
+    else:
+        num_parameters_in_embedding_layers = embedding_size
+    num_total_parameters = num_ffn_parameters + num_attn_parameters + num_parameters_in_embedding_layers
+    flops_per_token = 2 * (num_ffn_parameters_per_exp + num_attn_parameters + num_parameters_in_embedding_layers)
+    return {
+        "n_params": num_total_parameters,
+        "n_ffn_params": num_ffn_parameters,
+        "n_attn_params": num_attn_parameters,
+        "n_embd_params": num_parameters_in_embedding_layers,
+        "n_ffn_params_perexp": num_ffn_parameters_per_exp,
+        "flops_per_token": flops_per_token,
+    }

@@ -530,8 +530,11 @@ class HFTokenizer(MegatronTokenizer):
         super().__init__(vocab_file)
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
-        self.eod_id = self.tokenizer.token_to_id("<|endoftext|>")
-        self.pad_id = self.tokenizer.token_to_id("<|padding|>")
+        for eos_token in ["<|endoftext|>", "</s>"]:
+            res = self.tokenizer.token_to_id(eos_token)
+            if res is not None:
+                self.eod_id = res
+                break
 
     @property
     def vocab_size(self):

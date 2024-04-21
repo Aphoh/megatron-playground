@@ -334,9 +334,9 @@ def save_checkpoint(queue, args):
 
         if post_process:
             msg = queue_get("final norm")
-            final_norm_weight = msg.pop("weight")
+            final_norm_weight = msg.pop("final norm weight")
             if md.norm_has_bias:
-                final_norm_bias = msg.pop("bias")
+                final_norm_bias = msg.pop("final norm bias")
             for tp_rank in range(args.target_tensor_parallel_size):
                 blocks[tp_rank].final_layernorm.weight.data.copy_(final_norm_weight)
                 if md.norm_has_bias:
@@ -356,7 +356,7 @@ def save_checkpoint(queue, args):
                 if not hasattr(models[0], 'output_layer'):
                     print("ERROR: got an output layer, but model does not have one")
                     exit(1)
-                output_layer_weight = do_vocab_padding(md, msg.pop("weight"), margs)
+                output_layer_weight = do_vocab_padding(md, msg.pop("output layer weight"), margs)
                 output_layer_weight = torch.chunk(output_layer_weight, args.target_tensor_parallel_size, dim=0)
                 for tp_rank in range(args.target_tensor_parallel_size):
                     models[tp_rank].output_layer.weight.data.copy_(output_layer_weight[tp_rank])

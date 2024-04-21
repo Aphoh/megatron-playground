@@ -9,6 +9,7 @@ import torch
 from megatron import dist_signal_handler
 from megatron.core import Timers
 from megatron.tokenizer import build_tokenizer
+from megatron.utils import compute_wandb_extras
 from .microbatches import build_num_microbatches_calculator
 
 _GLOBAL_ARGS = None
@@ -189,11 +190,13 @@ def _set_wandb_writer(args):
         else:
             # Defaults to the save dir.
             save_dir = os.path.join(args.save, 'wandb')
+        config = vars(args)
+        config |= compute_wandb_extras(args)
         wandb_kwargs = {
             'dir': save_dir,
             'name': args.wandb_exp_name,
             'project': args.wandb_project,
-            'config': vars(args)}
+            'config': config}
         os.makedirs(wandb_kwargs['dir'], exist_ok=True)
         wandb.init(**wandb_kwargs)
         _GLOBAL_WANDB_WRITER = wandb
