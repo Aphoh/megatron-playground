@@ -302,8 +302,9 @@ class _IndexReader(object):
     def __del__(self) -> None:
         """Clean up the object
         """
-        self.bin_buffer_mmap._mmap.close()
-        del self.bin_buffer_mmap
+        if hasattr(self, "bin_buffer_mmap"):
+            self.bin_buffer_mmap._mmap.close()
+            del self.bin_buffer_mmap
 
     def __len__(self) -> int:
         """Return the length of the dataset
@@ -321,8 +322,7 @@ class _IndexReader(object):
             idx (int): The index into the dataset
 
         Returns:
-            Tuple[numpy.int32, numpy.int64, Optional[numpy.int8]]: The pointer, length and mode at
-            the index
+            Tuple[numpy.int32, numpy.int64, Optional[numpy.int8]]: The pointer, length and mode at the index
         """
         return (
             self.sequence_pointers[idx],
@@ -348,10 +348,6 @@ class IndexedDataset(torch.utils.data.Dataset):
         self.multimodal = None
         self.mmap = None
 
-        self.index = None
-        self.bin_buffer = None
-        self.bin_buffer_mmap = None
-
         self.initialize(path_prefix, multimodal, mmap)
 
     def initialize(self, path_prefix: str, multimodal: bool, mmap: bool) -> None:
@@ -367,12 +363,21 @@ class IndexedDataset(torch.utils.data.Dataset):
 
             mmap (bool): Whether to mmap the .bin file
         """
+        idx_path = get_idx_path(path_prefix)
+        bin_path = get_bin_path(path_prefix)
+        assert os.path.exists(idx_path) and os.path.exists(
+            bin_path
+        ), f"One or both of the .idx and .bin files cannot be found at the path prefix {self.path_prefix}"
+
         self.path_prefix = path_prefix
         self.multimodal = multimodal
         self.mmap = mmap
-        self.index = _IndexReader(get_idx_path(self.path_prefix), self.multimodal)
+
+        self.index = _IndexReader(idx_path, self.multimodal)
+        self.bin_buffer = None
+        self.bin_buffer_mmap = None
         if mmap:
-            self.bin_buffer_mmap = numpy.memmap(get_bin_path(self.path_prefix), mode="r", order="C")
+            self.bin_buffer_mmap = numpy.memmap(bin_path, mode="r", order="C")
             self.bin_buffer = memoryview(self.bin_buffer_mmap)
 
     def __getstate__(self) -> Tuple[str, bool, bool]:
@@ -422,8 +427,7 @@ class IndexedDataset(torch.utils.data.Dataset):
             TypeError: When the index is of an unexpected type
 
         Returns:
-            Union[numpy.ndarray, Tuple[numpy.ndarray, numpy.ndarray]]: The sequence tokens and
-            modes at the index or index slice
+            Union[numpy.ndarray, Tuple[numpy.ndarray, numpy.ndarray]]: The sequence tokens and modes at the index or index slice
         """
         if isinstance(idx, (int, numpy.integer)):
             sequence_pointer, sequence_length, sequence_mode = self.index[idx]
@@ -510,6 +514,16 @@ class IndexedDataset(torch.utils.data.Dataset):
         return a portion of the item.
 
         get(idx) is the same as [idx] but get() does not support slicing.
+
+        Args:
+            idx (Union[int, numpy.integer]): The index into the dataset
+
+            offset (int): The integer token offset in the sequence
+
+            length (int): The number of tokens to grab from the sequence
+
+        Returns:
+            Union[numpy.ndarray, Tuple[numpy.ndarray, numpy.ndarray]]: The sequence tokens and modes at the index
         """
         sequence_pointer, sequence_length, sequence_mode = self.index[idx]
         if length is None:
@@ -632,9 +646,10 @@ class IndexedDatasetBuilder(object):
 
         Args:
             tensor (torch.Tensor): The document to add
+
             lengths (List[int]): The lengths of each item in the document
-            modes (Optional[List[int]], optional): The modes for each item in the document.
-            Defaults to None.
+
+            modes (Optional[List[int]], optional): The modes for each item in the document. Defaults to None.
         """
         np_array = numpy.array(tensor, dtype=self.dtype)
         self.data_file.write(np_array.tobytes(order="C"))

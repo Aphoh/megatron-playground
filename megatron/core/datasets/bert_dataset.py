@@ -15,14 +15,10 @@ from megatron.core.datasets.utils import Split
 
 @dataclass
 class BERTMaskedWordPieceDatasetConfig(MaskedWordPieceDatasetConfig):
-    """Configuration object for Megatron Core BERT WordPiece datasets
-
-    Attributes:
-        classification_head (bool): Option to perform the next sequence prediction during
-        sampling
-    """
+    """Configuration object for Megatron Core BERT WordPiece datasets"""
 
     classification_head: bool = None
+    """Option to perform the next sequence prediction during sampling"""
 
     def __post_init__(self) -> None:
         """Do asserts and set fields post init
@@ -36,8 +32,7 @@ class BERTMaskedWordPieceDataset(MaskedWordPieceDataset):
     """The BERT dataset that assumes WordPiece tokenization
 
     Args:
-        indexed_dataset (IndexedDataset): The IndexedDataset around which to build the
-        MegatronDataset
+        indexed_dataset (IndexedDataset): The IndexedDataset around which to build the MegatronDataset
 
         dataset_path (str): The real path on disk to the dataset, for bookkeeping
 
