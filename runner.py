@@ -224,7 +224,8 @@ def get_llama_args(args: Arguments) -> dict:
     res["norm_epsilon"] = "%f" % config.rms_norm_eps # this is weird for some reason
     res["position_embedding_type"] = "rope"
     res["rotary_base"] = int(config.rope_theta)
-    res["swiglu"] = ()
+    res["act_fn"] = "silu"
+    res["glu"] = ()
     res["tokenizer_type"] = "HFTokenizer"
     res["vocab_file"] = tokenizer_file
     res["bf16"] = ()

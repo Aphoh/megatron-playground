@@ -354,9 +354,20 @@ def validate_args(args, defaults={}):
     for req_arg in required_args:
         _check_arg_is_not_none(args, req_arg)
 
+    # Backwards compatability for swiglu
+    if args.swiglu:
+        args.glu = True
+        args.act_fn = 'silu'
+    if args.relu:
+        args.act_fn = 'relu'
+    if args.squared_relu:
+        args.act_fn = 'squared_relu'
+    if args.gelu_exact:
+        args.act_fn = 'gelu_exact'
+
     # Checks.
     if args.ffn_hidden_size is None:
-        if args.swiglu:
+        if args.glu:
             # reduce the dimnesion for MLP since projections happens on
             # two linear layers. this keeps the number of paramters in
             # the same ballpark as the counterpart with 4*h size
@@ -571,26 +582,9 @@ def core_transformer_config_from_args(args, config_class=None):
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
     kw_args['rotary_interleaved'] = args.rotary_interleaved
-    if args.swiglu:
-        kw_args['activation_func'] = mact.silu
-        kw_args['gated_linear_unit'] = True
-        kw_args['bias_activation_fusion'] = args.bias_swiglu_fusion
-    elif not args.squared_relu and not args.relu:
-        kw_args['bias_activation_fusion'] = args.bias_gelu_fusion
-    if args.squared_relu:
-        assert not args.swiglu
-        def squared_relu(x):
-            return torch.pow(F.relu(x), 2)
-        kw_args['activation_func'] = squared_relu
-    if args.relu:
-        if args.swiglu: # TODO: redo all the activation logic
-            kw_args["gated_linear_unit"] = True
-            kw_args["bias_activation_fusion"] = args.add_bias_linear
-        assert not args.squared_relu 
-        kw_args['activation_func'] = mact.relu
-    if args.gelu_exact:
-        assert not args.relu and not args.swiglu and not args.squared_relu
-        kw_args['activation_func'] = mact.gelu_exact
+    kw_args['activation_func'] = mact.ACTIVATIONS[args.act_fn]
+    kw_args['gated_linear_unit'] = args.glu
+    kw_args['bias_activation_fusion'] = mact.bias_fusion(args.act_fn, args.glu) is not None
 
     if args.mlp_eff_loss:
         kw_args["bias_activation_fusion"] = False
@@ -775,14 +769,10 @@ def _add_network_size_args(parser):
                        action='store_true',
                        help='If set, use original BERT residula connection '
                        'ordering.')
-    group.add_argument('--openai-gelu', action='store_true',
-                       help='Use OpenAIs GeLU implementation. This option'
-                       'should not be used unless for backward compatibility'
-                       'reasons.')
     group.add_argument('--squared-relu', action='store_true',
-                       help='Use squared relu activation instead of default gelu')
+                       help='Legacy. Use squared relu activation instead of default gelu')
     group.add_argument('--swiglu', action='store_true',
-                       help='Use gated linear units and SiLU activation instead of default gelu')
+                       help='Legacy. Use --act-fn and --glu Use gated linear units and SiLU activation instead of default gelu')
     group.add_argument('--onnx-safe', type=bool, required=False,
                        help='Use workarounds for known problems with '
                        'Torch ONNX exporter')
@@ -791,6 +781,10 @@ def _add_network_size_args(parser):
                        dest='bert_binary_head')
     group.add_argument('--untie-embeddings-and-output-weights', action='store_true',
                        help='Untie embeddings and output weights.'),
+    group.add_argument("--act-fn", type=str, default="gelu",
+                       choices=["gelu", "gelu_exact", "relu", "squared_relu", "silu"],
+                       help="Activation function to use.")
+    group.add_argument("--glu", default=False, action="store_true", help="Use gated linear units.")
     return parser
 
 
@@ -1051,13 +1045,9 @@ def _add_training_args(parser):
                        help='Disable fusion of query_key_value scaling, '
                        'masking, and softmax.',
                        dest='masked_softmax_fusion')
-    group.add_argument('--no-bias-gelu-fusion', action='store_false',
+    group.add_argument('--no-bias-act-fusion', action='store_false',
                        help='Disable bias and gelu fusion.',
-                       dest='bias_gelu_fusion')
-    group.add_argument('--no-bias-swiglu-fusion', action='store_false',
-                       help='Disable bias and swiglu fusion, the fusion is '
-                       'available only when using megatron-core.',
-                       dest='bias_swiglu_fusion')
+                       dest='bias_act_fusion')
     group.add_argument('--no-bias-dropout-fusion', action='store_false',
                        help='Disable bias and dropout fusion.',
                        dest='bias_dropout_fusion')

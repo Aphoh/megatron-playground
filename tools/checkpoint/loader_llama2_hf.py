@@ -46,7 +46,8 @@ def load_args_from_checkpoint(args):
     args.iteration = 1 # '0', 'release' don't work
     args.add_position_embedding = False
     args.use_rotary_position_embeddings = True
-    args.swiglu = True
+    args.act_fn = 'silu'
+    args.glu = True
     args.tokenizer_type = "Llama2Tokenizer"
     args.fp16 = True
     args.normalization = "RMSNorm"
@@ -256,7 +257,7 @@ def _load_checkpoint(queue, args):
     md.position_embedding_type = margs.position_embedding_type
     md.linear_bias = margs.add_bias_linear
     md.norm_has_bias = margs.normalization == "LayerNorm"
-    md.swiglu = margs.swiglu
+    md.swiglu = margs.swiglu # TODO: fix
     md.previous_tensor_parallel_size = margs.tensor_model_parallel_size
     md.previous_pipeline_parallel_size = margs.pipeline_model_parallel_size
     md.true_vocab_size = None # skips padding in saver

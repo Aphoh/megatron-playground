@@ -20,7 +20,7 @@ class ModelDescriptor:
     bert_binary_head: Optional[bool]
     true_vocab_size: Optional[int]
     norm_has_bias: bool
-    swiglu: bool
+    glu: bool
     checkpoint_args: dict
     consumed_train_samples: Optional[int]
     consumed_valid_samples: Optional[int]

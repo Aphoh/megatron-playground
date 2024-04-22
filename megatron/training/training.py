@@ -72,7 +72,7 @@ def num_floating_point_operations(args, batch_size):
         args.num_query_groups = args.num_attention_heads
     # MoE.
     num_experts_routed_to = 1 if args.num_experts is None else args.moe_router_topk
-    gated_linear_multiplier = 3 / 2 if args.swiglu else 1
+    gated_linear_multiplier = 3 / 2 if args.glu else 1
     return (
         12
         * batch_size

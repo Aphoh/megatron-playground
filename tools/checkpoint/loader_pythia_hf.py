@@ -70,7 +70,8 @@ def load_llama_args(args, margs):
     margs.iteration = 1  # '0', 'release' don't work
     margs.position_embedding_type = "rope"
     margs.rotary_base = config.rope_theta
-    margs.swiglu = True
+    margs.act_fn = 'silu'
+    margs.glu = True
     margs.tokenizer_type = "HFTokenizer"
     margs.vocab_file = tokenizer_file
     margs.bf16 = True
@@ -118,9 +119,10 @@ def load_pythia_args(args, margs):
     margs.ffn_hidden_size = config.intermediate_size
     margs.init_method_std = config.initializer_range
     if config.hidden_act == "relu":
-        margs.relu = True
+        margs.act_fn = 'relu'
     else:
         assert config.hidden_act == "gelu"
+        margs.act_fn = 'gelu'
     margs.hidden_dropout = config.hidden_dropout
     margs.attention_dropout = config.attention_dropout
     margs.weight_decay = 0.01
@@ -339,7 +341,7 @@ def _load_checkpoint(queue, args):
     check_for_arg('bert_binary_head')
     check_for_arg('disable_bias_linear', False)
     check_for_arg('params_dtype')
-    check_for_arg('swiglu', False)
+    check_for_arg('swiglu', False) #TODO(will) update
 
     # Determine how to make our models.
     assert args.model_type == 'GPT', 'pythia a GPT model.'
@@ -378,7 +380,7 @@ def _load_checkpoint(queue, args):
         bias_linear=margs.add_bias_linear,
         qkv_bias=margs.add_bias_linear or margs.add_qkv_bias,
         norm_has_bias=margs.normalization == "LayerNorm",
-        swiglu=margs.swiglu,
+        glu=margs.glu,
         previous_tensor_parallel_size=tp_size,
         previous_pipeline_parallel_size=pp_size,
         true_vocab_size=margs.vocab_size,  # Indicates skipping padding in saver
@@ -425,7 +427,7 @@ def _load_checkpoint(queue, args):
             put_tensor(message, "input norm bias", layer_num)
             put_tensor(message, "post norm bias", layer_num)
 
-        if md.swiglu:
+        if md.glu:
             put_tensor(message, "mlp l0 weight W", layer_num)
             put_tensor(message, "mlp l0 weight V", layer_num)
         else:

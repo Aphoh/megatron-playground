@@ -56,41 +56,23 @@ class MLPActivation(MegatronModule):
     def __init__(self, config: TransformerConfig):
         super().__init__(config=config)
 
-        self.activation_func = config.activation_func
-
     def apply_eff_loss(self, intermediate_parallel: torch.Tensor) -> torch.Tensor:
-        if self.config.mlp_eff_loss:
-            eff_loss = self.config.mlp_eff_loss * compute_eff_loss(intermediate_parallel)
-            return EffLossScaler.apply(intermediate_parallel, eff_loss)
-        return intermediate_parallel
+        eff_loss = self.config.mlp_eff_loss * compute_eff_loss(intermediate_parallel)
+        return EffLossScaler.apply(intermediate_parallel, eff_loss)
 
     def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
-        # TODO: add bias_geglu_fusion, fix up everything, check bias_add_linear
+        should_apply_eff_loss = self.training and self.config.mlp_eff_loss
         if self.config.bias_activation_fusion:
-            assert not self.config.mlp_eff_loss, "Eff loss not supported with bias activation fusion"
-            if self.activation_func == mact.gelu_approx:
-                assert self.config.add_bias_linear is True
-                intermediate_parallel = bias_gelu_impl(intermediate_parallel, bias_parallel)
-            elif self.activation_func == mact.gelu_exact:
-                intermediate_parallel = mact.bias_gelu_exact(intermediate_parallel, bias_parallel)
-            elif self.activation_func == mact.silu and self.config.gated_linear_unit:
-                intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
-            elif self.activation_func == mact.relu and self.config.gated_linear_unit:
-                intermediate_parallel = mact.bias_reglu(intermediate_parallel, bias_parallel)
-            else:
-                raise ValueError("Only support fusion of gelu and swiglu")
-        elif not self.config.mlp_eff_loss and self.config.gated_linear_unit and not bias_parallel:
-            if self.activation_func == mact.relu:
-                intermediate_parallel = mact.reglu(intermediate_parallel)
-            elif self.activation_func == mact.silu:
-                intermediate_parallel = mact.swiglu(intermediate_parallel)
-            else:
-                raise ValueError("Only glu fusion of reglu and swiglu")
-        else:
+            fused_fn = mact.get_fused_bias_act(self.config.activation_func, self.config.gated_linear_unit)
+            assert fused_fn is not None, "Could not find fused function for bias activation fusion"
+            assert self.config.add_bias_linear, "Bias fusion requires add_bias_linear"
+            assert not should_apply_eff_loss, "Eff loss not supported with bias fusion"
+            assert bias_parallel is not None, "Bias fusion requires bias"
+            intermediate_parallel = fused_fn(intermediate_parallel, bias_parallel)
+        elif should_apply_eff_loss:
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
             if self.config.gated_linear_unit:
-
                 def glu(x):
                     x = torch.chunk(x, 2, dim=-1)
                     x0 = self.apply_eff_loss(x[0])
@@ -100,6 +82,13 @@ class MLPActivation(MegatronModule):
             else:
                 intermediate_parallel = self.apply_eff_loss(intermediate_parallel)
                 intermediate_parallel = self.activation_func(intermediate_parallel)
+        else:
+            fused_fn = mact.get_fused_act(self.config.activation_func, self.config.gated_linear_unit)
+            assert fused_fn is not None, "Could not find function for activation"
+            if bias_parallel is not None:
+                intermediate_parallel = intermediate_parallel + bias_parallel
+            intermediate_parallel = fused_fn(intermediate_parallel)
+
         return intermediate_parallel
 
 
