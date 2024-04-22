@@ -506,7 +506,7 @@ def core_transformer_config_from_args(args):
     if args.relu:
         if args.swiglu: # TODO: redo all the activation logic
             kw_args["gated_linear_unit"] = True
-            kw_args["bias_activation_fusion"] = args.bias_add_linear
+            kw_args["bias_activation_fusion"] = args.add_bias_linear
         assert not args.squared_relu 
         kw_args['activation_func'] = mact.relu
     if args.gelu_exact:

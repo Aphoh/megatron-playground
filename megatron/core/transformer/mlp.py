@@ -83,7 +83,7 @@ class MLPActivation(MegatronModule):
             elif self.activation_func == mact.silu:
                 intermediate_parallel = mact.swiglu(intermediate_parallel)
             else:
-                raise ValueError("Only glu fusion of geglu and swiglu")
+                raise ValueError("Only glu fusion of reglu and swiglu")
         else:
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
