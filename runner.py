@@ -162,12 +162,12 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
                     + ["--model-type", "GPT"]
                     + ["--loader", "pythia_hf"]
                     + ["--saver", "megatron"]
-                    + ["--target-tensor-parallel-size", target_tp]
+                    + ["--target-tensor-parallel-size", str(target_tp)]
                     + ["--load-dir", "/tmp/ignore"]
-                    + ["--save-dir", load_loc]
+                    + ["--save-dir", str(load_loc)]
                     + ["--hf-cache-dir", args.hf_cache_dir]
                     + ["--repo", args.load_repo]
-                    + ["--revision", args.load_rev],
+                    + ["--revision", args.load_rev]
                     + ["--hf-model-type", load_type],
                     check=True,
                 )
@@ -204,7 +204,7 @@ def get_pythia_args(args: Arguments) -> dict:
     res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
     res["attention_dropout"] = 0.0
     res["hidden_dropout"] = 0.0
-    res["weight_decay"] = 0.01
+    res["weight_decay"] = 0.1
     res["seq_length"] = 2048
     res["transformer_impl"] = "transformer_engine"
 
@@ -214,28 +214,27 @@ def get_llama_args(args: Arguments) -> dict:
     res = {}
     print_rank_0(args, f"Loading Llama config from {args.load_repo}")
     config = LlamaConfig.from_pretrained(args.load_repo, revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    tokenizer_file = hf_hub_download(args.load_rev, "tokenizer.json", cache_dir=args.hf_cache_dir)
+    tokenizer_file = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
     res["seq_length"] = config.max_position_embeddings
     res["max_position_embeddings"] = config.max_position_embeddings
     res["hidden_size"] = config.hidden_size
     res["num_attention_heads"] = config.num_attention_heads
     res["num_layers"] = config.num_hidden_layers
     res["global_batch_size"] = 1024
-    res["norm_epsilon"] = config.rms_norm_eps
-    res["iteration"] = 1  # '0', 'release' don't work
+    res["norm_epsilon"] = "%f" % config.rms_norm_eps # this is weird for some reason
     res["position_embedding_type"] = "rope"
-    res["rotary_base"] = config.rope_theta
-    res["swiglu"] = True
+    res["rotary_base"] = int(config.rope_theta)
+    res["swiglu"] = ()
     res["tokenizer_type"] = "HFTokenizer"
     res["vocab_file"] = tokenizer_file
-    res["bf16"] = True
+    res["bf16"] = ()
     res["normalization"] = "RMSNorm"
-    res["add_bias_linear"] = False
-    res["untie_embeddings_and_output_weights"] = True
+    res["disable_bias_linear"] = ()
+    res["untie_embeddings_and_output_weights"] = ()
     res["ffn_hidden_size"] = config.intermediate_size
 
     if hasattr(config, "num_key_value_heads"):
-        res["group_query_attention"] = True
+        res["group_query_attention"] = ()
         res["num_query_groups"] = config.num_key_value_heads
 
     file = f"slimpj-{args.load_type}-c1_text_document"
@@ -264,10 +263,16 @@ def get_training_arguments(args: Arguments) -> dict:
     elif args.dtype == "fp16":
         res["fp16"] = ()
 
-    if args.load_pythia:
+    if args.load_repo and args.load_type == "pythia":
         res["adam_beta1"] = 0.9
         res["adam_beta2"] = 0.95
         res["adam_eps"] = 1e-8
+        res["global_batch_size"] = 1024
+        res["finetune"] = ()
+    elif args.load_repo and args.load_type == "llama":
+        res["adam_beta1"] = 0.9
+        res["adam_beta2"] = 0.95
+        res["adam_eps"] = 1e-5
         res["global_batch_size"] = 1024
         res["finetune"] = ()
 
