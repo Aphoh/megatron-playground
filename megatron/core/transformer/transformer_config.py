@@ -275,9 +275,9 @@ class TransformerConfig(ModelParallelConfig):
             self.attention_softmax_in_fp32 = True
 
         if self.bias_activation_fusion:
-            if self.activation_func not in [mact.gelu_exact, mact.gelu_approx, mact.silu]:
+            if self.activation_func not in [mact.gelu_exact, mact.gelu_approx, mact.silu, mact.relu]:
                 raise ValueError(
-                    "When bias_activation_fusion is True, activation function should be either gelu or swiglu"
+                    "When bias_activation_fusion is True, activation function should be either gelu, silu"
                 )
             if self.activation_func in [mact.gelu_exact, mact.gelu_approx] and not self.add_bias_linear:
                 raise ValueError(
