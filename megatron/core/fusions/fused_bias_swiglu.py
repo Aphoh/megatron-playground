@@ -79,3 +79,23 @@ def bias_swiglu_impl(input, bias):
 
 # bias_swiglu_impl = BiasSwiGLUFunction.apply
 # swiglu_impl = SwiGLUFunction.apply
+
+@torch.compile
+def reglu(y):
+    y_1, y_2 = torch.chunk(y, 2, -1)
+    return F.relu(y_1) * y_2
+
+@torch.compile
+def _bias_reglu_impl(y, bias):
+    y = y + bias
+    return reglu(y)
+
+def bias_reglu(input, bias):
+    ori_shape = input.shape
+    assert len(ori_shape) in [2, 3]
+    input = input.view(-1, ori_shape[-1])
+    if bias is not None:
+        output = _bias_reglu_impl(input, bias)
+    else:
+        output = reglu(input)
+    return output if len(ori_shape) == 2 else output.view(ori_shape[0], ori_shape[1], -1)

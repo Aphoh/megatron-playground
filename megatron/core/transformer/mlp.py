@@ -73,6 +73,8 @@ class MLPActivation(MegatronModule):
                 intermediate_parallel = mact.bias_gelu_exact(intermediate_parallel, bias_parallel)
             elif self.activation_func == mact.silu and self.config.gated_linear_unit:
                 intermediate_parallel = bias_swiglu_impl(intermediate_parallel, bias_parallel)
+            elif self.activation_func == mact.relu and self.config.gated_linear_unit:
+                intermediate_parallel = mact.bias_reglu(intermediate_parallel, bias_parallel)
             else:
                 raise ValueError("Only support fusion of gelu and swiglu")
         else:

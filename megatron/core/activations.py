@@ -8,3 +8,6 @@ gelu_exact = fused_bias_gelu.gelu_exact
 gelu_approx = fused_bias_gelu.gelu_approx
 silu = F.silu
 swiglu = fused_bias_swiglu.SwiGLUFunction.apply
+relu = F.relu
+reglu = fused_bias_swiglu.reglu
+bias_reglu = fused_bias_swiglu.bias_reglu

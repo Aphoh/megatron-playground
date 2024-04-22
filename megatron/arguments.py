@@ -504,8 +504,11 @@ def core_transformer_config_from_args(args):
             return torch.pow(F.relu(x), 2)
         kw_args['activation_func'] = squared_relu
     if args.relu:
-        assert not args.swiglu and not args.squared_relu
-        kw_args['activation_func'] = F.relu
+        if args.swiglu: # TODO: redo all the activation logic
+            kw_args["gated_linear_unit"] = True
+            kw_args["bias_activation_fusion"] = True
+        assert not args.squared_relu 
+        kw_args['activation_func'] = mact.relu
     if args.gelu_exact:
         assert not args.relu and not args.swiglu and not args.squared_relu
         kw_args['activation_func'] = mact.gelu_exact
