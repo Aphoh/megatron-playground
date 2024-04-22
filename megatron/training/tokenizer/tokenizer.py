@@ -530,11 +530,12 @@ class HFTokenizer(MegatronTokenizer):
         super().__init__(vocab_file)
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
-        for eos_token in ["<|endoftext|>", "</s>"]:
+        for eos_token in ["<|endoftext|>", "</s>", "<|end_of_text|>"]:
             res = self.tokenizer.token_to_id(eos_token)
             if res is not None:
                 self.eod_id = res
                 break
+        assert self.eod_id, "Could not find eod token"
 
     @property
     def vocab_size(self):

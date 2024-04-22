@@ -1,4 +1,4 @@
-from .utils import print_rank_0
+from megatron.training.utils import print_rank_0
 
 
 def convert_linear_prenorm(model, state_dict, linear_key, prenorm_key, args):

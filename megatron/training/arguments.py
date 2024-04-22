@@ -584,7 +584,7 @@ def core_transformer_config_from_args(args, config_class=None):
     kw_args['rotary_interleaved'] = args.rotary_interleaved
     kw_args['activation_func'] = mact.ACTIVATIONS[args.act_fn]
     kw_args['gated_linear_unit'] = args.glu
-    kw_args['bias_activation_fusion'] = mact.bias_fusion(args.act_fn, args.glu) is not None
+    kw_args['bias_activation_fusion'] = mact.get_fused_bias_act(args.act_fn, args.glu) is not None
 
     if args.mlp_eff_loss:
         kw_args["bias_activation_fusion"] = False

@@ -19,7 +19,7 @@ from .optimizer import (
     MegatronOptimizer,
 )
 from .optimizer_config import OptimizerConfig
-from megatron.utils import print_rank_0
+from megatron.training.utils import print_rank_0
 
 logger = getLogger(__name__)
 

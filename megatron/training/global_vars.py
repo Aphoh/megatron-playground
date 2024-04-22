@@ -173,7 +173,7 @@ def _set_wandb_writer(args):
             raise ValueError("Please specify the tensorboard directory to sync with wandb!")
 
         import wandb
-        from megatron.utils import compute_wandb_extras
+        from megatron.training.utils import compute_wandb_extras
         if args.wandb_save_dir:
             save_dir = args.wandb_save_dir
         else:
