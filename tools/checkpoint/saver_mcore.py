@@ -253,6 +253,7 @@ def save_checkpoint(queue, args):
         from megatron.training.tokenizer.tokenizer import _vocab_size_with_padding
         from megatron.legacy import fused_kernels
         from megatron.core import mpu
+        from tools.checkpoint.arg_utils import ModelDescriptor
     except ModuleNotFoundError:
         print("Unable to import Megatron, please specify the path to Megatron using --megatron-path. Exiting.")
         exit(1)
@@ -282,7 +283,7 @@ def save_checkpoint(queue, args):
             exit(1)
 
 
-    md = queue_get()
+    md: ModelDescriptor = queue_get()
 
     if args.target_tensor_parallel_size is None:
         if hasattr(md, 'previous_tensor_parallel_size'):
@@ -318,7 +319,7 @@ def save_checkpoint(queue, args):
                 '--tensor-model-parallel-size', str(args.target_tensor_parallel_size),
                 '--pipeline-model-parallel-size', str(args.target_pipeline_parallel_size),
                 '--no-masked-softmax-fusion',
-                '--no-bias-gelu-fusion',
+                '--no-bias-act-fusion',
                 '--no-bias-dropout-fusion',
                 '--no-async-tensor-model-parallel-allreduce',
                 '--use-cpu-initialization',
@@ -397,7 +398,7 @@ def save_checkpoint(queue, args):
     # Megatron args. (i.e., 'margs')
     margs = get_args()
 
-    if hasattr(md, 'consumed_train_samples'):
+    if md.consumed_train_samples is not None:
         margs.consumed_train_samples = md.consumed_train_samples
         margs.consumed_valid_samples = md.consumed_valid_samples
         print(f"Setting consumed_train_samples to {margs.consumed_train_samples}"
@@ -518,8 +519,8 @@ def save_checkpoint(queue, args):
             dense_weight = torch.chunk(msg.pop("dense weight"), args.target_tensor_parallel_size, dim=1)
             mlp_l1_weight = torch.chunk(msg.pop("mlp l1 weight"), args.target_tensor_parallel_size, dim=1)
 
-            # Special handling for swiglu
-            if md.swiglu:
+            # Special handling for glu
+            if md.glu:
                 mlp_l0_weight_W = torch.chunk(msg.pop("mlp l0 weight W"), args.target_tensor_parallel_size, dim=0)
                 mlp_l0_weight_V = torch.chunk(msg.pop("mlp l0 weight V"), args.target_tensor_parallel_size, dim=0)
                 mlp_l0_weight = [torch.cat(weights, dim=0) for weights in zip(mlp_l0_weight_W, mlp_l0_weight_V)]
@@ -567,9 +568,9 @@ def save_checkpoint(queue, args):
 
         if post_process:
             msg = queue_get("final norm")
-            final_norm_weight = msg.pop("weight")
+            final_norm_weight = msg.pop("final norm weight")
             if md.norm_has_bias:
-                final_norm_bias = msg.pop("bias")
+                final_norm_bias = msg.pop("final norm bias")
             for tp_rank, model in enumerate(models):
                 setter.set_final_norm(
                     model,
@@ -592,7 +593,7 @@ def save_checkpoint(queue, args):
                 if not hasattr(models[0], 'output_layer'):
                     print("ERROR: got an output layer, but model does not have one")
                     exit(1)
-                output_layer_weight = torch.chunk(msg.pop("weight"), args.target_tensor_parallel_size, dim=0)
+                output_layer_weight = torch.chunk(msg.pop("output layer weight"), args.target_tensor_parallel_size, dim=0)
                 for tp_rank, model in enumerate(models):
                     setter.set_output_layer(model, output_layer_weight[tp_rank])
                 del output_layer_weight

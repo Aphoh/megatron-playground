@@ -45,7 +45,7 @@ def build_tokenizer(args):
         assert args.vocab_size is not None
         tokenizer = _NullTokenizer(args.vocab_size)
     elif args.tokenizer_type == "HFTokenizer":
-        tokenizer = HFTokenizer(args.vocab_file) 
+        tokenizer = HFTokenizer(args.vocab_file, args.vocab_size) 
     else:
         raise NotImplementedError('{} tokenizer is not '
                                   'implemented.'.format(args.tokenizer_type))
@@ -526,7 +526,7 @@ class _NullTokenizer:
 class HFTokenizer(MegatronTokenizer):
     """Designed to Integrate HF's Tokenizer library."""
 
-    def __init__(self, vocab_file):
+    def __init__(self, vocab_file, vocab_size):
         super().__init__(vocab_file)
         from tokenizers import Tokenizer
         self.tokenizer = Tokenizer.from_file(vocab_file)
@@ -537,9 +537,14 @@ class HFTokenizer(MegatronTokenizer):
                 break
         assert self.eod_id is not None, "Could not find eod token"
 
+        if vocab_size is not None:
+            self.true_vocab_size = vocab_size
+        else:
+            self.true_vocab_size = self.tokenizer.get_vocab_size()
+
     @property
     def vocab_size(self):
-        return self.tokenizer.get_vocab_size()
+        return self.true_vocab_size
 
     @property
     def vocab(self):

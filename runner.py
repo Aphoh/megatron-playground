@@ -158,10 +158,10 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
                 print("RANK", args.rank, "converting checkpoint for", args.load_repo)
                 print_rank_0(args, f"Downloading checkpoint from {args.load_repo}")
                 subprocess.run(
-                    ["python", "tools/checkpoint/util.py"]
+                    ["python", "tools/checkpoint/convert.py"]
                     + ["--model-type", "GPT"]
                     + ["--loader", "pythia_hf"]
-                    + ["--saver", "megatron"]
+                    + ["--saver", "mcore"]
                     + ["--target-tensor-parallel-size", str(target_tp)]
                     + ["--load-dir", "/tmp/ignore"]
                     + ["--save-dir", str(load_loc)]

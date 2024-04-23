@@ -268,10 +268,9 @@ def _load_checkpoint(queue, args):
     try:
         from megatron.training.arguments import parse_args, validate_args
         from megatron.training.global_vars import set_args, set_global_variables
-        from megatron.model import module
         from megatron.core import mpu
         from megatron.core.enums import ModelType
-        from megatron import fused_kernels
+        from megatron.legacy import fused_kernels
     except ModuleNotFoundError:
         print(
             "Unable to import Megatron, please specify the path to Megatron using --megatron-path. Exiting."
@@ -283,7 +282,6 @@ def _load_checkpoint(queue, args):
     sys.argv = [
         'script.py',
         '--no-masked-softmax-fusion',
-        '--no-bias-gelu-fusion',
         '--no-bias-dropout-fusion',
         '--no-async-tensor-model-parallel-allreduce',
         '--use-cpu-initialization',
@@ -348,7 +346,6 @@ def _load_checkpoint(queue, args):
     margs.model_type = ModelType.encoder_or_decoder
 
     # Suppress warning about torch.distributed not being initialized.
-    module.MegatronModule.embedding_warning_printed = True
 
     set_global_variables(margs, build_tokenizer=False)
     mpu.set_tensor_model_parallel_world_size(margs.tensor_model_parallel_size)
@@ -377,7 +374,7 @@ def _load_checkpoint(queue, args):
         bert_binary_head=margs.bert_binary_head,
         output_layer=margs.untie_embeddings_and_output_weights,
         position_embedding_type=margs.position_embedding_type,
-        bias_linear=margs.add_bias_linear,
+        linear_bias=margs.add_bias_linear,
         qkv_bias=margs.add_bias_linear or margs.add_qkv_bias,
         norm_has_bias=margs.normalization == "LayerNorm",
         glu=margs.glu,
@@ -434,7 +431,7 @@ def _load_checkpoint(queue, args):
             put_tensor(message, "mlp l0 weight", layer_num)
 
         put_tensor(message, "mlp l1 weight", layer_num)
-        if md.bias_linear:
+        if md.linear_bias:
             put_tensor(message, "mlp l0 bias", layer_num)
             put_tensor(message, "mlp l1 bias", layer_num)
 

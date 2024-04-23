@@ -173,7 +173,7 @@ def _load_checkpoint(queue, args):
     # We want all arguments to come from us.
     sys.argv = ['script.py',
                 '--no-masked-softmax-fusion',
-                '--no-bias-gelu-fusion',
+                '--no-bias-act-fusion',
                 '--no-bias-dropout-fusion',
                 '--no-async-tensor-model-parallel-allreduce',
                 '--use-cpu-initialization',

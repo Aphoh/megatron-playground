@@ -14,7 +14,7 @@ class ModelDescriptor:
     make_vocab_size_divisible_by: Optional[int]
     params_dtype: torch.dtype
     output_layer: bool
-    bias_linear: bool
+    linear_bias: bool
     qkv_bias: bool
     model_type: str
     bert_binary_head: Optional[bool]
