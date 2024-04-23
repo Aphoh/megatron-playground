@@ -535,7 +535,7 @@ class HFTokenizer(MegatronTokenizer):
             if res is not None:
                 self.eod_id = res
                 break
-        assert self.eod_id, "Could not find eod token"
+        assert self.eod_id is not None, "Could not find eod token"
 
     @property
     def vocab_size(self):
