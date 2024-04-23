@@ -6,7 +6,8 @@ import sys
 import torch
 from arg_utils import ModelDescriptor
 import safetensors.torch as sttorch
-from transformers import GPTNeoXConfig, GPTNeoXTokenizerFast, LlamaConfig, LlamaTokenizerFast
+from transformers import GPTNeoXConfig, LlamaConfig
+from tokenizers import Tokenizer
 from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
 from huggingface_hub.utils import RepositoryNotFoundError, EntryNotFoundError, RevisionNotFoundError
 from typing import Optional
@@ -55,10 +56,7 @@ def load_llama_args(args, margs):
     tokenizer_file = hf_hub_download(
         args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
     )
-    tokenizer = LlamaTokenizerFast.from_pretrained(
-        args.repo, revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-
+    tokenizer = Tokenizer.from_file(tokenizer_file)
     # Update Megatron args.
     margs.seq_length = config.max_position_embeddings
     margs.max_position_embeddings = config.max_position_embeddings
@@ -78,7 +76,7 @@ def load_llama_args(args, margs):
     margs.normalization = "RMSNorm"
     margs.add_bias_linear = False
     margs.untie_embeddings_and_output_weights = True
-    margs.vocab_size = tokenizer.vocab_size
+    margs.vocab_size = tokenizer.get_vocab_size()
     margs.ffn_hidden_size = config.intermediate_size
 
     if hasattr(config, "num_key_value_heads"):
@@ -93,10 +91,7 @@ def load_pythia_args(args, margs):
     tokenizer_file = hf_hub_download(
         args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
     )
-    tokenizer = GPTNeoXTokenizerFast.from_pretrained(
-        args.repo, revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-
+    tokenizer = Tokenizer.from_file(tokenizer_file)
     # Update Megatron args.
     margs.seq_length = config.max_position_embeddings
     margs.max_position_embeddings = margs.seq_length
@@ -115,7 +110,7 @@ def load_pythia_args(args, margs):
     margs.bf16 = config.torch_dtype == "bfloat16"
     margs.normalization = "LayerNorm"
     margs.untie_embeddings_and_output_weights = not config.tie_word_embeddings
-    margs.vocab_size = tokenizer.vocab_size
+    margs.vocab_size = tokenizer.get_vocab_size()
     margs.ffn_hidden_size = config.intermediate_size
     margs.init_method_std = config.initializer_range
     if config.hidden_act == "relu":

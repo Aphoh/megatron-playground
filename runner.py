@@ -3,7 +3,7 @@ import subprocess
 import argparse
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-from transformers import GPTNeoXConfig, LlamaConfig
+from transformers import GPTNeoXConfig, LlamaConfig, LlamaTokenizer
 from huggingface_hub import hf_hub_download
 from filelock import FileLock
 import socket
@@ -142,12 +142,15 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
         load_loc = model_loc / args.load_rev
         lock_file = model_loc / "loader.lock"
         target_tp = 1
-        if "13b" in args.load_repo:
+        if "13b" in args.load_repo.lower():
             print(args, "Loading 13b model with TP=2")
             target_tp = 2
-        if "70b" in args.load_repo:
+        if "70b" in args.load_repo.lower():
             print(args, "Loading 70b model with TP=8")
             target_tp = 8
+        if "8b" in args.load_repo.lower():
+            print(args, "Loading 8b model with TP=2")
+            target_tp = 2
         res["tensor_model_parallel_size"] = target_tp
         with FileLock(lock_file):
             res["load"] = load_loc

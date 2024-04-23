@@ -437,6 +437,8 @@ def save_checkpoint(queue, args):
     if md.true_vocab_size is not None:
         # figure out what our padded vocab size is
         orig_vocab_size = orig_word_embed.shape[0]
+        if orig_vocab_size < md.true_vocab_size
+            print(f"WARNING: Original vocab size {orig_vocab_size} is less than true vocab size {md.true_vocab_size}.")
         margs.padded_vocab_size = _vocab_size_with_padding(md.true_vocab_size, margs)
 
         # Cut out extra padding we don't need
