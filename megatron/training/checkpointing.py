@@ -715,7 +715,7 @@ def load_checkpoint(model, optimizer, opt_param_scheduler, load_arg='load', stri
         print_rank_0('could not find arguments in the checkpoint ...')
 
     # Model.
-    strict = False if args.retro_add_retriever or  args.dsparse_finetune else strict
+    strict = False if args.retro_add_retriever or args.transformer_impl == "transformer_engine" or args.dsparse_finetune else strict
 
     convert_linear_prenorms(model, state_dict, args)
     # Check whither we use a pre_mlp_layernorm or it's embedded in the linear layer
