@@ -350,7 +350,7 @@ def save_checkpoint(queue, args):
 
     margs = parse_args()
 
-    if hasattr (md, 'checkpoint_args'):
+    if md.checkpoint_args:
         # These are arguments that we are either changing, or cause problems for validation if they are set
         # Note that some of these deal with T5 so will need to be changed if we support T5.
         args_to_keep = ['tensor_model_parallel_size', 'pipeline_model_parallel_size', 'world_size', 'params_dtype',
@@ -367,7 +367,7 @@ def save_checkpoint(queue, args):
                         'train_iters', 'lr_decay_iters', 'lr_warmup_iters', 'lr_warmup_fraction',
                         'start_weight_decay', 'end_weight_decay']
 
-        for arg, value in vars(md.checkpoint_args).items():
+        for arg, value in md.checkpoint_args.items():
             if arg in args_to_keep:
                 continue
             if not hasattr(margs, arg):
@@ -378,8 +378,8 @@ def save_checkpoint(queue, args):
                 setattr(margs, arg, value)
 
     # Explicitly copy sequence_parallel, apply_query_key_layer_scaling.
-    margs.sequence_parallel = md.checkpoint_args.sequence_parallel
-    margs.apply_query_key_layer_scaling = md.checkpoint_args.apply_query_key_layer_scaling
+    margs.sequence_parallel = md.checkpoint_args["sequence_parallel"]
+    margs.apply_query_key_layer_scaling = md.checkpoint_args["apply_query_key_layer_scaling"]
 
     validate_args(margs)
 
@@ -437,7 +437,7 @@ def save_checkpoint(queue, args):
     if md.true_vocab_size is not None:
         # figure out what our padded vocab size is
         orig_vocab_size = orig_word_embed.shape[0]
-        if orig_vocab_size < md.true_vocab_size
+        if orig_vocab_size < md.true_vocab_size:
             print(f"WARNING: Original vocab size {orig_vocab_size} is less than true vocab size {md.true_vocab_size}.")
         margs.padded_vocab_size = _vocab_size_with_padding(md.true_vocab_size, margs)
 
