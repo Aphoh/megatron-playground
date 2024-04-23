@@ -198,7 +198,7 @@ def get_pythia_args(args: Arguments) -> dict:
     res["normalization"] = "LayerNorm"
 
     # download tokenizer
-    tokenizer_path = hf_hub_download(args.load_rev, "tokenizer.json", cache_dir=args.hf_cache_dir)
+    tokenizer_path = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
     res["vocab_file"] = tokenizer_path
     res["tokenizer_type"] = "HFTokenizer"
     res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
