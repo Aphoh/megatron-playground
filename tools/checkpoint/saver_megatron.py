@@ -38,7 +38,7 @@ def save_checkpoint(queue, args):
         from megatron.training.global_vars import set_global_variables, get_args
         from megatron.core.enums import ModelType
         from megatron.training.tokenizer.tokenizer import _vocab_size_with_padding
-        from megatron import fused_kernels
+        from megatron.legacy import fused_kernels
         from megatron.core import mpu
     except ModuleNotFoundError:
         print("Unable to import Megatron, please specify the path to Megatron using --megatron-path. Exiting.")
@@ -126,7 +126,7 @@ def save_checkpoint(queue, args):
                 '--tensor-model-parallel-size', str(args.target_tensor_parallel_size),
                 '--pipeline-model-parallel-size', str(args.target_pipeline_parallel_size),
                 '--no-masked-softmax-fusion',
-                '--no-bias-gelu-fusion',
+                '--no-bias-act-fusion',
                 '--no-bias-dropout-fusion',
                 '--no-async-tensor-model-parallel-allreduce',
                 '--use-cpu-initialization',
@@ -150,7 +150,7 @@ def save_checkpoint(queue, args):
 
     if md.output_layer:
         sys.argv.append('--untie-embeddings-and-output-weights')
-    if not md.bias_linear:
+    if not md.linear_bias:
         sys.argv.append('--disable-bias-linear')
         if md.qkv_bias:
             sys.argv.append('--add-qkv-bias')
@@ -280,7 +280,7 @@ def save_checkpoint(queue, args):
             post_norm_weight = msg.pop("post norm weight")
             if md.norm_has_bias:
                 post_norm_bias = msg.pop("post norm bias")
-            if md.bias_linear:
+            if md.linear_bias:
                 dense_bias = msg.pop("dense bias")
                 mlp_l1_bias = msg.pop("mlp l1 bias")
 
@@ -290,16 +290,16 @@ def save_checkpoint(queue, args):
             mlp_l1_weight = torch.chunk(msg.pop("mlp l1 weight"), args.target_tensor_parallel_size, dim=1)
 
             # Special handling for swiglu
-            if md.swiglu:
+            if md.glu:
                 mlp_l0_weight_W = torch.chunk(msg.pop("mlp l0 weight W"), args.target_tensor_parallel_size, dim=0)
                 mlp_l0_weight_V = torch.chunk(msg.pop("mlp l0 weight V"), args.target_tensor_parallel_size, dim=0)
                 mlp_l0_weight = [torch.cat(weights, dim=0) for weights in zip(mlp_l0_weight_W, mlp_l0_weight_V)]
             else:
                 mlp_l0_weight = torch.chunk(msg.pop("mlp l0 weight"), args.target_tensor_parallel_size, dim=0)
 
-            if md.bias_linear:
+            if md.linear_bias:
                 qkv_bias = torch.chunk(msg.pop("qkv bias"), args.target_tensor_parallel_size, dim=0)
-                if md.swiglu:
+                if md.glu:
                     mlp_l0_bias_W = torch.chunk(msg.pop("mlp l0 bias W"), args.target_tensor_parallel_size, dim=0)
                     mlp_l0_bias_V = torch.chunk(msg.pop("mlp l0 bias V"), args.target_tensor_parallel_size, dim=0)
                     mlp_l0_bias = [torch.cat(bias, dim=0) for bias in zip(mlp_l0_bias_W, mlp_l0_bias_V)]
@@ -314,7 +314,7 @@ def save_checkpoint(queue, args):
                 l.mlp.linear_fc1.weight.data.copy_(mlp_l0_weight[tp_rank])
                 l.mlp.linear_fc2.weight.data.copy_(mlp_l1_weight[tp_rank])
 
-                if md.bias_linear:
+                if md.linear_bias:
                     l.self_attention.linear_qkv.bias.data.copy_(qkv_bias[tp_rank])
                     l.self_attention.linear_proj.bias.data.copy_(dense_bias)
                     l.mlp.linear_fc1.bias.data.copy_(mlp_l0_bias[tp_rank])

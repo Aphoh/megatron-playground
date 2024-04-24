@@ -273,7 +273,7 @@ def get_training_arguments(args: Arguments) -> dict:
         res["adam_eps"] = 1e-8
         res["global_batch_size"] = 1024
         res["finetune"] = ()
-    elif args.load_repo and args.load_type == "llama":
+    elif args.load_repo and args.load_type in ["llama", "llama3"]:
         res["adam_beta1"] = 0.9
         res["adam_beta2"] = 0.95
         res["adam_eps"] = 1e-5
