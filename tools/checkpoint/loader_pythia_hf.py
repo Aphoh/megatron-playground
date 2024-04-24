@@ -277,6 +277,7 @@ def _load_checkpoint(queue, args):
     sys.argv = [
         'script.py',
         '--no-masked-softmax-fusion',
+        '--no-bias-act-fusion',
         '--no-bias-dropout-fusion',
         '--no-async-tensor-model-parallel-allreduce',
         '--use-cpu-initialization',
@@ -334,13 +335,11 @@ def _load_checkpoint(queue, args):
     check_for_arg('bert_binary_head')
     check_for_arg('disable_bias_linear', False)
     check_for_arg('params_dtype')
-    check_for_arg('swiglu', False) #TODO(will) update
+    check_for_arg('glu', False)
 
     # Determine how to make our models.
     assert args.model_type == 'GPT', 'pythia a GPT model.'
     margs.model_type = ModelType.encoder_or_decoder
-
-    # Suppress warning about torch.distributed not being initialized.
 
     set_global_variables(margs, build_tokenizer=False)
     mpu.set_tensor_model_parallel_world_size(margs.tensor_model_parallel_size)

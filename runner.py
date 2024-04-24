@@ -164,7 +164,7 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
                     ["python", "tools/checkpoint/convert.py"]
                     + ["--model-type", "GPT"]
                     + ["--loader", "pythia_hf"]
-                    + ["--saver", "mcore"]
+                    + ["--saver", "megatron"]
                     + ["--target-tensor-parallel-size", str(target_tp)]
                     + ["--load-dir", "/tmp/ignore"]
                     + ["--save-dir", str(load_loc)]
