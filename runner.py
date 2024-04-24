@@ -137,7 +137,7 @@ def arg_dict_to_list(args: dict) -> List[str]:
 
 
 def get_checkpoint_load_arguments(args: Arguments) -> dict:
-    res = {}
+    res = {"wandb_save_dir": Path(args.checkpoint_dir) / args.name / "wandb"}
     if args.do_save:
         res["save"] = Path(args.checkpoint_dir) / args.name
     if args.load_repo:
