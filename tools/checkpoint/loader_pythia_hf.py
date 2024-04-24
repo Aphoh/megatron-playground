@@ -8,24 +8,22 @@ from arg_utils import ModelDescriptor
 import safetensors.torch as sttorch
 from transformers import GPTNeoXConfig, LlamaConfig
 from tokenizers import Tokenizer
-from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
-from huggingface_hub.utils import RepositoryNotFoundError, EntryNotFoundError, RevisionNotFoundError
+from huggingface_hub import hf_hub_download 
+from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
 from typing import Optional
 
 
-def file_exists(
+def try_get_file(
     repo_id: str,
     filename: str,
-    repo_type: Optional[str] = None,
-    revision: Optional[str] = None,
-    token: Optional[str] = None,
+    revision: str,
+    cache_dir: str,
 ) -> bool:
-    url = hf_hub_url(repo_id=repo_id, repo_type=repo_type, revision=revision, filename=filename)
     try:
-        get_hf_file_metadata(url, token=token)
-        return True
-    except (RepositoryNotFoundError, EntryNotFoundError, RevisionNotFoundError):
-        return False
+        res = hf_hub_download(repo_id, filename, revision=revision, cache_dir=cache_dir)
+        return res
+    except (EntryNotFoundError, LocalEntryNotFoundError):
+        return None
 
 
 def add_arguments(parser):
@@ -124,30 +122,32 @@ def load_pythia_args(args, margs):
     assert config.attention_bias
 
 
-def load_pythia_state_dict(args):
-    # Load Huggingface model.
+def load_state_dict(args):
     weight_files = []
-    if file_exists(args.repo, "pytorch_model.bin.index.json", revision=args.revision):
-        index = hf_hub_download(
-            args.repo,
-            "pytorch_model.bin.index.json",
-            revision=args.revision,
-            cache_dir=args.hf_cache_dir,
-        )
-        index_contents = json.load(open(index))
-        weight_files.extend(list(set(index_contents["weight_map"].values())))
+    for path in ["model.safetensors", "pytorch_model.bin"]:
+        if (file := try_get_file(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)) is not None:
+            weight_files.append(file)
+            break
+        elif (file := try_get_file(
+            args.repo, path + ".index.json", revision=args.revision, cache_dir=args.hf_cache_dir
+        )):
+            index_contents = json.load(open(file))
+            paths = list(set(index_contents["weight_map"].values()))
+            for path in paths:
+                weight_files.append(
+                    hf_hub_download(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)
+                )
+            break
     else:
-        weight_files.append("pytorch_model.bin")
-    downloaded_weights = []
-    for weight_file in weight_files:
-        res = hf_hub_download(
-            args.repo, weight_file, revision=args.revision, cache_dir=args.hf_cache_dir
-        )
-        downloaded_weights.append(res)
+        raise ValueError("No checkpoint files found!")
 
     state_dict = {}
-    for weight_file in downloaded_weights:
-        state_dict |= torch.load(weight_file, map_location="cpu")
+    for weight_file in weight_files:
+        if weight_file.endswith(".safetensors"):
+            state_dict |= sttorch.load_file(weight_file, device="cpu")
+        else:
+            assert weight_file.endswith(".bin")
+            state_dict |= torch.load(weight_file, map_location="cpu")
 
     return state_dict
 
@@ -179,36 +179,6 @@ def pythia_get_tensor(state_dict, key, _margs, layer=None):
     )
 
     return state_dict.pop(reskey)
-
-
-def load_llama_state_dict(args):
-    # load Huggingface model.
-    weight_files = []
-    if file_exists(args.repo, "model.safetensors.index.json", revision=args.revision):
-        index = hf_hub_download(
-            args.repo,
-            "model.safetensors.index.json",
-            revision=args.revision,
-            cache_dir=args.hf_cache_dir,
-        )
-        index_contents = json.load(open(index))
-        weight_files.extend(list(set(index_contents["weight_map"].values())))
-    else:
-        assert file_exists(args.repo, "model.safetensors")
-        weight_files.append("model.safetensors")
-
-    downloaded_weights = []
-    for weight_file in weight_files:
-        res = hf_hub_download(
-            args.repo, weight_file, revision=args.revision, cache_dir=args.hf_cache_dir
-        )
-        downloaded_weights.append(res)
-
-    state_dict = {}
-    for weight_file in downloaded_weights:
-        state_dict |= sttorch.load_file(weight_file, device="cpu")
-
-    return state_dict
 
 
 def llama_get_tensor(state_dict, key, margs, layer=None):
@@ -386,11 +356,7 @@ def _load_checkpoint(queue, args):
     # Get first pipe stage.
     mpu.set_tensor_model_parallel_rank(0)
     mpu.set_pipeline_model_parallel_rank(0)
-    state_dict = {}
-    if args.hf_model_type == "llama":
-        state_dict = load_llama_state_dict(args)
-    elif args.hf_model_type == "pythia":
-        state_dict = load_pythia_state_dict(args)
+    state_dict = load_state_dict(args)
 
     queue.put(md)
 

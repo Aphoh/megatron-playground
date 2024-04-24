@@ -45,6 +45,7 @@ class Arguments:
 
     # Should be bf16, fp16 or fp32
     dtype: str = "bf16"
+    do_save: bool = True
 
 
 def parse_args() -> Tuple[Arguments, list]:
@@ -90,7 +91,6 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument("--gpus-per-node", type=int, help="Number of GPUs per node")
     parser.add_argument("--hostnames", type=str, help="Hostnames of the nodes involved")
     parser.add_argument("--rdzv-id", type=str, help="Rondevouz ID")
-
     parser.add_argument(
         "--dtype",
         type=str,
@@ -98,6 +98,8 @@ def parse_args() -> Tuple[Arguments, list]:
         choices=["bf16", "fp16", "fp32"],
         help="Data type to use",
     )
+    parser.add_argument("--no-save", action="store_false", dest="do_save", help="Don't save checkpoints")
+
     args, unknown = parser.parse_known_args()
     if args.rank is None:
         args.rank = int(os.environ["MGT_RANK"])
@@ -135,7 +137,9 @@ def arg_dict_to_list(args: dict) -> List[str]:
 
 
 def get_checkpoint_load_arguments(args: Arguments) -> dict:
-    res = {"save": Path(args.checkpoint_dir) / args.name}
+    res = {}
+    if args.do_save:
+        res["save"] = Path(args.checkpoint_dir) / args.name
     if args.load_repo:
         model_name = args.load_repo.split("/")[-1].lower()
         model_loc = Path(args.checkpoint_dir) / "base-ckpts" / model_name
@@ -295,12 +299,13 @@ def get_logging_arguments(args: Arguments) -> dict:
         "log_timers_to_tensorboard": (),
         "log_validation_ppl_to_tensorboard": (),
         "log_interval": 10,
-        "save_interval": 1000,
         "eval_interval": 100,
         "tensorboard_dir": Path(args.tensorboard_dir) / args.name,
         "wandb_project": args.wandb_project,
         "wandb_exp_name": args.name,
     }
+    if args.do_save:
+        res["save_interval"] = 1000
     return res
 
 
