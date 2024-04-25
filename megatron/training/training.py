@@ -271,7 +271,7 @@ def pretrain(train_valid_test_dataset_provider,
         evaluate_and_print_results(prefix, forward_step_func,
                                    valid_data_iterator, model,
                                    0, process_non_loss_data_func, config,
-                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=False)
+                                   verbose=True, write_to_tensorboard=True, is_test=False)
 
     if not args.skip_train:
         print_rank_0('training ...')
@@ -304,14 +304,14 @@ def pretrain(train_valid_test_dataset_provider,
         evaluate_and_print_results(prefix, forward_step_func,
                                    valid_data_iterator, model,
                                    iteration, process_non_loss_data_func, config,
-                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=False)
+                                   verbose=True, write_to_tensorboard=True, is_test=False)
 
     if args.do_test:
         prefix = f'iteration {iteration} on test set'
         evaluate_and_print_results(prefix, forward_step_func,
                                    test_data_iterator, model,
                                    iteration, process_non_loss_data_func, config,
-                                   verbose=True, write_to_tensorboard=not args.skip_train, is_test=True)
+                                   verbose=True, write_to_tensorboard=True, is_test=True)
 
 
 
