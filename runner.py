@@ -155,6 +155,12 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
         if "8b" in args.load_repo.lower():
             print(args, "Loading 8b model with TP=2")
             target_tp = 2
+        if "7b" in args.load_repo.lower():
+            print(args, "Loading 7b model with TP=2")
+            target_tp = 2
+        if "6.9b" in args.load_repo.lower():
+            print(args, "Loading 6.9b model with TP=2")
+            target_tp = 2
         res["tensor_model_parallel_size"] = target_tp
         with FileLock(lock_file):
             res["load"] = load_loc
