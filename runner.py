@@ -211,7 +211,7 @@ def get_pythia_args(args: Arguments) -> dict:
     res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
     res["attention_dropout"] = 0.0
     res["hidden_dropout"] = 0.0
-    res["weight_decay"] = 0.1
+    res["weight_decay"] = 0.01
     res["seq_length"] = 2048
     res["transformer_impl"] = "transformer_engine"
 
