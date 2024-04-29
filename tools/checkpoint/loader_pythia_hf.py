@@ -166,8 +166,12 @@ def load_olmo_args(args, margs):
     margs.iteration = 1  # '0', 'release' don't work
     margs.position_embedding_type = "rope"
     margs.rotary_base = config.rope_theta
-    assert config.activation_type == 'swiglu'
     margs.act_fn = 'silu'
+    if config.mlp_hidden_size:
+        margs.ffn_hidden_size = config.mlp_hidden_size // 2
+    else:
+        margs.ffn_hidden_size = config.d_model * config.mlp_ratio // 2
+    assert config.activation_type == 'swiglu'
     margs.glu = True
     margs.tokenizer_type = "HFTokenizer"
     margs.vocab_size = config.vocab_size
@@ -178,7 +182,6 @@ def load_olmo_args(args, margs):
     margs.add_bias_linear = False
     margs.untie_embeddings_and_output_weights = not config.weight_tying
     margs.vocab_size = tokenizer.get_vocab_size()
-    margs.ffn_hidden_size = config.mlp_hidden_size
 
 ARG_SETTERS = {
     "pythia": load_pythia_args,
@@ -261,7 +264,6 @@ def olmo_get_tensor(state_dict, key, margs, layer=None):
         prefix = f"model.transformer.blocks.{layer}."
     mapper = {
         "word embeddings": "model.transformer.wte.weight",
-        "qkv weight": "att_proj.weight",
         "dense weight": "attn_out.weight",
         "mlp l1 weight": "ff_out.weight",
     }
@@ -271,6 +273,19 @@ def olmo_get_tensor(state_dict, key, margs, layer=None):
         return state_dict[prefix + "ff_proj.weight"].chunk(2, dim=0)[1]
     elif key == "mlp l0 weight V":
         return state_dict.pop(prefix + "ff_proj.weight").chunk(2, dim=0)[0]
+    elif key == "qkv weight":
+        q_proj, k_proj, v_proj = torch.chunk(state_dict.pop(prefix + "att_proj.weight"), 3, dim=0)
+        ng = margs.num_attention_heads # TODO: group query attention in olmo models
+        dim = margs.hidden_size
+        nh = margs.num_attention_heads
+        return torch.cat(
+            [
+                q_proj.reshape((ng, dim * nh // ng, -1)),
+                k_proj.reshape((ng, dim, -1)),
+                v_proj.reshape((ng, dim, -1)),
+            ],
+            dim=1,
+        ).reshape((-1, margs.hidden_size))
     else:
         raise ValueError(f"Invalid key ({key}) for olmo model")
 
@@ -440,8 +455,9 @@ def _load_checkpoint(queue, args):
     for layer_num in range(margs.num_layers):
         message = {}
 
-        put_tensor(message, "input norm weight", layer_num)
-        put_tensor(message, "post norm weight", layer_num)
+        if md.norm_has_weight:
+            put_tensor(message, "input norm weight", layer_num)
+            put_tensor(message, "post norm weight", layer_num)
         if md.norm_has_bias:
             put_tensor(message, "input norm bias", layer_num)
             put_tensor(message, "post norm bias", layer_num)

@@ -12,6 +12,7 @@ from megatron.core import InferenceParams, parallel_state, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
+from megatron.core.transformer.custom_layers.nonparametric_layernorm import NonParametricLayerNorm
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.custom_layers.transformer_engine import (
     TENorm,
@@ -172,7 +173,8 @@ class TransformerBlock(MegatronModule):
             # Final layer norm before output.
             # We don't check transformer-impl because in checkpoint conversion we need
             # something that supports RMSNorm too.
-            self.final_layernorm = TENorm(
+            ln_cls = TENorm if not self.config.normalization == "NonParametricLayerNorm" else NonParametricLayerNorm
+            self.final_layernorm = ln_cls(
                 config=self.config,
                 hidden_size=self.config.hidden_size,
                 eps=self.config.layernorm_epsilon,

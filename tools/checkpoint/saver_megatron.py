@@ -250,6 +250,7 @@ def save_checkpoint(queue, args):
     mpu.set_pipeline_model_parallel_rank(0)
     post_process = args.target_pipeline_parallel_size == 1
     models = get_models(args.target_tensor_parallel_size, md.params_dtype, True, post_process)
+    print("Got model\n", models[0])
     for tp_rank, model in enumerate(models):
         model.embedding.word_embeddings.weight.data.copy_(out_word_embed_in[tp_rank])
         if pos_embed is not None:

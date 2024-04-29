@@ -3,7 +3,8 @@ import subprocess
 import argparse
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-from transformers import GPTNeoXConfig, LlamaConfig, LlamaTokenizer
+from transformers import GPTNeoXConfig, LlamaConfig, OlmoConfig
+from tokenizers import Tokenizer
 from huggingface_hub import hf_hub_download
 from filelock import FileLock
 import socket
@@ -60,7 +61,7 @@ def parse_args() -> Tuple[Arguments, list]:
         type=str,
         default=None,
         help="Huggingface model type to load",
-        choices=["pythia", "llama", "llama3"],
+        choices=["pythia", "llama", "llama3", "olmo"],
     )
     parser.add_argument('--data-dir', type=str, default="/data", help='Location to load data')
     parser.add_argument(
@@ -146,21 +147,17 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
         load_loc = model_loc / args.load_rev
         lock_file = model_loc / "loader.lock"
         target_tp = 1
-        if "13b" in args.load_repo.lower():
-            print(args, "Loading 13b model with TP=2")
-            target_tp = 2
-        if "70b" in args.load_repo.lower():
-            print(args, "Loading 70b model with TP=8")
-            target_tp = 8
-        if "8b" in args.load_repo.lower():
-            print(args, "Loading 8b model with TP=2")
-            target_tp = 2
-        if "7b" in args.load_repo.lower():
-            print(args, "Loading 7b model with TP=2")
-            target_tp = 2
-        if "6.9b" in args.load_repo.lower():
-            print(args, "Loading 6.9b model with TP=2")
-            target_tp = 2
+        tp_map = {
+            "13b": 2,
+            "70b": 8,
+            "8b": 2,
+            "7b": 2,
+            "6.9b": 2,
+        }
+        for k, v in tp_map.items():
+            if k in model_name:
+                target_tp = v
+                break
         res["tensor_model_parallel_size"] = target_tp
         with FileLock(lock_file):
             res["load"] = load_loc
@@ -260,6 +257,46 @@ def get_llama_args(args: Arguments) -> dict:
 
     return res
 
+def get_olmo_args(args: Arguments) -> dict:
+    res = {}
+    print_rank_0(args, f"Loading OLMo config from {args.load_repo}")
+    config = OlmoConfig.from_pretrained(args.load_repo, revision=args.load_rev, cache_dir=args.hf_cache_dir)
+    tokenizer_file = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
+    tokenizer = Tokenizer.from_file(tokenizer_file)
+    res["seq_length"] = config.max_sequence_length
+    res["max_position_embeddings"] = config.max_sequence_length
+    res["hidden_size"] = config.d_model
+    res["num_attention_heads"] = config.n_heads
+    res["num_layers"] = config.n_layers
+    res["global_batch_size"] = 2048
+    res["norm_epsilon"] = 1e-5
+    res["position_embedding_type"] = "rope"
+    res["rotary_base"] = int(config.rope_theta)
+    res["act_fn"] = "silu"
+    if config.mlp_hidden_size:
+        res["ffn_hidden_size"] = config.mlp_hidden_size // 2
+    else:
+        res["ffn_hidden_size"] = config.d_model * config.mlp_ratio // 2
+    assert config.activation_type == 'swiglu'
+    res["glu"] = ()
+    res["tokenizer_type"] = "HFTokenizer"
+    res["vocab_file"] = tokenizer_file
+    res["bf16"] = ()
+    res["normalization"] = "NonParametricLayerNorm"
+    res["disable_bias_linear"] = ()
+    if not config.weight_tying:
+        res["untie_embeddings_and_output_weights"] = ()
+
+    res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
+    res["attention_dropout"] = 0.0
+    res["hidden_dropout"] = 0.0
+    res["weight_decay"] = 0.1 # TODO: is this optimal?
+    res["transformer_impl"] = "transformer_engine"
+    assert config.vocab_size == tokenizer.get_vocab_size(), f"Vocab size mismatch, cfg: {config.vocab_size} != tokenizer: {tokenizer.get_vocab_size()}"
+    res["vocab_size"] = config.vocab_size
+
+    return res
+
 def get_model_arch_arguments(args: Arguments) -> dict:
     res = {"use_mcore_models": ()}
     if args.load_repo:
@@ -267,6 +304,8 @@ def get_model_arch_arguments(args: Arguments) -> dict:
             res |= get_pythia_args(args)
         elif args.load_type == "llama" or args.load_type == "llama3":
             res |= get_llama_args(args)
+        elif args.load_type == "olmo":
+            res |= get_olmo_args(args)
     return res
 
 
