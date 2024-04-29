@@ -758,7 +758,7 @@ def _add_network_size_args(parser):
                        help='Pad the vocab size to be divisible by this value.'
                        'This is added for computational efficieny reasons.')
     group.add_argument('--normalization', default='LayerNorm',
-                       choices=['LayerNorm', 'RMSNorm'],
+                       choices=['LayerNorm', 'RMSNorm', 'NonParametricLayerNorm'],
                        help='Which normalization technique to use.')
     group.add_argument('--norm-epsilon', type=float, default=1e-5,
                        help='Epsilon for layer norm and RMS norm.')

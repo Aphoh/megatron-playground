@@ -6,7 +6,7 @@ import sys
 import torch
 from arg_utils import ModelDescriptor
 import safetensors.torch as sttorch
-from transformers import GPTNeoXConfig, LlamaConfig
+from transformers import GPTNeoXConfig, LlamaConfig, OlmoConfig
 from tokenizers import Tokenizer
 from huggingface_hub import hf_hub_download 
 from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
@@ -25,6 +25,34 @@ def try_get_file(
     except (EntryNotFoundError, LocalEntryNotFoundError):
         return None
 
+def load_state_dict(args):
+    weight_files = []
+    for path in ["model.safetensors", "pytorch_model.bin"]:
+        if (file := try_get_file(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)) is not None:
+            weight_files.append(file)
+            break
+        elif (file := try_get_file(
+            args.repo, path + ".index.json", revision=args.revision, cache_dir=args.hf_cache_dir
+        )):
+            index_contents = json.load(open(file))
+            paths = list(set(index_contents["weight_map"].values()))
+            for path in paths:
+                weight_files.append(
+                    hf_hub_download(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)
+                )
+            break
+    else:
+        raise ValueError("No checkpoint files found!")
+
+    state_dict = {}
+    for weight_file in weight_files:
+        if weight_file.endswith(".safetensors"):
+            state_dict |= sttorch.load_file(weight_file, device="cpu")
+        else:
+            assert weight_file.endswith(".bin")
+            state_dict |= torch.load(weight_file, map_location="cpu")
+
+    return state_dict
 
 def add_arguments(parser):
     group = parser.add_argument_group(title='Pythia HF loader')
@@ -33,7 +61,7 @@ def add_arguments(parser):
         "--hf-model-type",
         type=str,
         required=True,
-        choices=["pythia", "llama"],
+        choices=["pythia", "llama", "olmo"],
         help="Huggingface model type.",
     )
     group.add_argument(
@@ -121,35 +149,42 @@ def load_pythia_args(args, margs):
     margs.weight_decay = 0.01
     assert config.attention_bias
 
+def load_olmo_args(args, margs):
+    config = OlmoConfig.from_pretrained(args.repo, revision=args.revision, cache_dir=args.hf_cache_dir)
+    tokenizer_file = hf_hub_download(
+        args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
+    )
+    tokenizer = Tokenizer.from_file(tokenizer_file)
+    # Update Megatron args.
+    margs.seq_length = config.max_sequence_length
+    margs.max_position_embeddings = config.max_sequence_length
+    margs.hidden_size = config.d_model
+    margs.num_attention_heads = config.n_heads
+    margs.num_layers = config.n_layers
+    margs.global_batch_size = 2048
+    margs.norm_epsilon = 1e-5
+    margs.iteration = 1  # '0', 'release' don't work
+    margs.position_embedding_type = "rope"
+    margs.rotary_base = config.rope_theta
+    assert config.activation_type == 'swiglu'
+    margs.act_fn = 'silu'
+    margs.glu = True
+    margs.tokenizer_type = "HFTokenizer"
+    margs.vocab_size = config.vocab_size
+    assert tokenizer.get_vocab_size() == config.vocab_size
+    margs.vocab_file = tokenizer_file
+    margs.bf16 = True
+    margs.normalization = "NonParametricLayerNorm"
+    margs.add_bias_linear = False
+    margs.untie_embeddings_and_output_weights = not config.weight_tying
+    margs.vocab_size = tokenizer.get_vocab_size()
+    margs.ffn_hidden_size = config.mlp_hidden_size
 
-def load_state_dict(args):
-    weight_files = []
-    for path in ["model.safetensors", "pytorch_model.bin"]:
-        if (file := try_get_file(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)) is not None:
-            weight_files.append(file)
-            break
-        elif (file := try_get_file(
-            args.repo, path + ".index.json", revision=args.revision, cache_dir=args.hf_cache_dir
-        )):
-            index_contents = json.load(open(file))
-            paths = list(set(index_contents["weight_map"].values()))
-            for path in paths:
-                weight_files.append(
-                    hf_hub_download(args.repo, path, revision=args.revision, cache_dir=args.hf_cache_dir)
-                )
-            break
-    else:
-        raise ValueError("No checkpoint files found!")
-
-    state_dict = {}
-    for weight_file in weight_files:
-        if weight_file.endswith(".safetensors"):
-            state_dict |= sttorch.load_file(weight_file, device="cpu")
-        else:
-            assert weight_file.endswith(".bin")
-            state_dict |= torch.load(weight_file, map_location="cpu")
-
-    return state_dict
+ARG_SETTERS = {
+    "pythia": load_pythia_args,
+    "llama": load_llama_args,
+    "olmo": load_olmo_args,
+}
 
 
 def pythia_get_tensor(state_dict, key, _margs, layer=None):
@@ -220,6 +255,30 @@ def llama_get_tensor(state_dict, key, margs, layer=None):
     else:
         raise ValueError(f"Invalid key ({key}) for llama model")
 
+def olmo_get_tensor(state_dict, key, margs, layer=None):
+    prefix = ""
+    if layer is not None:
+        prefix = f"model.transformer.blocks.{layer}."
+    mapper = {
+        "word embeddings": "model.transformer.wte.weight",
+        "qkv weight": "att_proj.weight",
+        "dense weight": "attn_out.weight",
+        "mlp l1 weight": "ff_out.weight",
+    }
+    if key in mapper:
+        return state_dict.pop(prefix + mapper[key])
+    elif key == "mlp l0 weight W":
+        return state_dict[prefix + "ff_proj.weight"].chunk(2, dim=0)[1]
+    elif key == "mlp l0 weight V":
+        return state_dict.pop(prefix + "ff_proj.weight").chunk(2, dim=0)[0]
+    else:
+        raise ValueError(f"Invalid key ({key}) for olmo model")
+
+TENSOR_GETTERS = {
+    "pythia": pythia_get_tensor,
+    "llama": llama_get_tensor,
+    "olmo": olmo_get_tensor,
+}
 
 def _load_checkpoint(queue, args):
 
@@ -270,6 +329,8 @@ def _load_checkpoint(queue, args):
         load_pythia_args(args, margs)
     elif args.hf_model_type == "llama":
         load_llama_args(args, margs)
+    elif args.hf_model_type == "olmo":
+        load_olmo_args(args, margs)
     else:
         print(f"Unknown model type {args.hf_model_type}. Exiting.")
         queue.put("exit")
@@ -341,6 +402,7 @@ def _load_checkpoint(queue, args):
         linear_bias=margs.add_bias_linear,
         qkv_bias=margs.add_bias_linear or margs.add_qkv_bias,
         norm_has_bias=margs.normalization == "LayerNorm",
+        norm_has_weight= margs.normalization != "NonParametricLayerNorm",
         glu=margs.glu,
         previous_tensor_parallel_size=tp_size,
         previous_pipeline_parallel_size=pp_size,
@@ -365,7 +427,7 @@ def _load_checkpoint(queue, args):
         msg["name"] = name
         queue.put(msg)
 
-    tensor_getter = pythia_get_tensor if args.hf_model_type == "pythia" else llama_get_tensor
+    tensor_getter = TENSOR_GETTERS[args.hf_model_type]
 
     def put_tensor(message, key, layer=None):
         message[key] = tensor_getter(state_dict, key, margs, layer)
@@ -405,7 +467,8 @@ def _load_checkpoint(queue, args):
 
     # Send final norm from tp_rank 0.
     message = {}
-    put_tensor(message, "final norm weight")
+    if md.norm_has_weight:
+        put_tensor(message, "final norm weight")
     if md.norm_has_bias:
         put_tensor(message, "final norm bias")
     queue_put("final norm", message)

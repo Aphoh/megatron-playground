@@ -19,6 +19,7 @@ class ModelDescriptor:
     model_type: str
     bert_binary_head: Optional[bool]
     true_vocab_size: Optional[int]
+    norm_has_weight: bool
     norm_has_bias: bool
     glu: bool
     checkpoint_args: dict

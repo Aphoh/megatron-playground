@@ -55,6 +55,7 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
     else:
         config = core_transformer_config_from_args(args)
 
+    nonparametric_layernorm = args.normalization == "NonParametricLayerNorm"
     if args.use_mcore_models:
         if args.spec is not None:
             transformer_layer_spec = import_module(args.spec)
@@ -62,9 +63,9 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             transformer_layer_spec = get_gpt_dsparse_layer_with_transformer_engine_spec()
         else:
             if use_te:
-                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args.num_experts, args.moe_grouped_gemm)
+                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args.num_experts, args.moe_grouped_gemm, nonparametric_layernorm=nonparametric_layernorm)
             else:
-                transformer_layer_spec = get_gpt_layer_local_spec(args.num_experts, args.moe_grouped_gemm)
+                transformer_layer_spec = get_gpt_layer_local_spec(args.num_experts, args.moe_grouped_gemm, nonparametric_layernorm=nonparametric_layernorm)
 
         model = GPTModel(
             config=config,

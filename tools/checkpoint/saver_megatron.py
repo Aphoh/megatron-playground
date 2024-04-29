@@ -274,11 +274,11 @@ def save_checkpoint(queue, args):
             msg = queue_get(f"transformer layer {total_layer_num}")
 
             # duplicated tensors
-            input_norm_weight = msg.pop("input norm weight")
+            if md.norm_has_weight:
+                input_norm_weight = msg.pop("input norm weight")
+                post_norm_weight = msg.pop("post norm weight")
             if md.norm_has_bias:
                 input_norm_bias = msg.pop("input norm bias")
-            post_norm_weight = msg.pop("post norm weight")
-            if md.norm_has_bias:
                 post_norm_bias = msg.pop("post norm bias")
             if md.linear_bias:
                 dense_bias = msg.pop("dense bias")
@@ -320,8 +320,9 @@ def save_checkpoint(queue, args):
                     l.mlp.linear_fc1.bias.data.copy_(mlp_l0_bias[tp_rank])
                     l.mlp.linear_fc2.bias.data.copy_(mlp_l1_bias)
 
-                l.self_attention.linear_qkv.layer_norm_weight.data.copy_(input_norm_weight)
-                l.mlp.linear_fc1.layer_norm_weight.data.copy_(post_norm_weight)
+                if md.norm_has_weight:
+                    l.self_attention.linear_qkv.layer_norm_weight.data.copy_(input_norm_weight)
+                    l.mlp.linear_fc1.layer_norm_weight.data.copy_(post_norm_weight)
                 if md.norm_has_bias:
                     l.self_attention.linear_qkv.layer_norm_bias.data.copy_(input_norm_bias)
                     l.mlp.linear_fc1.layer_norm_bias.data.copy_(post_norm_bias)
@@ -332,21 +333,25 @@ def save_checkpoint(queue, args):
 
         if post_process:
             msg = queue_get("final norm")
-            final_norm_weight = msg.pop("final norm weight")
-            if md.norm_has_bias:
-                final_norm_bias = msg.pop("final norm bias")
-            for tp_rank in range(args.target_tensor_parallel_size):
-                blocks[tp_rank].final_layernorm.weight.data.copy_(final_norm_weight)
+            if md.norm_has_weight or md.norm_has_bias:
+                if md.norm_has_weight:
+                    final_norm_weight = msg.pop("final norm weight")
                 if md.norm_has_bias:
-                    blocks[tp_rank].final_layernorm.bias.data.copy_(final_norm_bias)
-                # TODO: is pp_rank != 0 correct here? what is this doing???
-                # this assumes no untie-ing, so i'll disable for now
-                #if pp_rank != 0 and not md.output_layer:
-                #    # Copy word embeddings to final pipeline rank
-                #    blocks[tp_rank].output_layer.weight.data.copy_(out_word_embed[tp_rank])
-            del final_norm_weight
-            if md.norm_has_bias:
-                del final_norm_bias
+                    final_norm_bias = msg.pop("final norm bias")
+                for tp_rank in range(args.target_tensor_parallel_size):
+                    if md.norm_has_weight:
+                        blocks[tp_rank].final_layernorm.weight.data.copy_(final_norm_weight)
+                    if md.norm_has_bias:
+                        blocks[tp_rank].final_layernorm.bias.data.copy_(final_norm_bias)
+                    # TODO: is pp_rank != 0 correct here? what is this doing???
+                    # this assumes no untie-ing, so i'll disable for now
+                    #if pp_rank != 0 and not md.output_layer:
+                    #    # Copy word embeddings to final pipeline rank
+                    #    blocks[tp_rank].output_layer.weight.data.copy_(out_word_embed[tp_rank])
+                if md.norm_has_weight:
+                    del final_norm_weight
+                if md.norm_has_bias:
+                    del final_norm_bias
             check_message(msg)
 
             if md.output_layer:
