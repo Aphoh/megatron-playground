@@ -1335,11 +1335,14 @@ def evaluate_and_print_results(prefix, forward_step_func,
                     iteration)
 
     if extra_log_dict and 'bins' in extra_log_dict:
-        bins = extra_log_dict.pop('bins').cpu().float().numpy()
+        bins = extra_log_dict.pop('bins')
         if writer:
             gt0s = []
             for key, hist in extra_log_dict.items():
-                gt0_idx = bins.shape[0] // 2
+                gt0_idx = torch.argwhere(bins == 0.0)
+                assert gt0_idx.numel() == 1, f"Bins must contain only one zero element, got {bins}"
+                gt0_idx = gt0_idx.squeeze().item()
+                assert bins[gt0_idx].item() == 0
                 gt0 = (hist[gt0_idx:].sum() / hist.sum()).item()
                 gt0s.append(gt0)
                 writer.add_scalar(f'{loss_type} {key} gt0', gt0, iteration)
@@ -1347,11 +1350,11 @@ def evaluate_and_print_results(prefix, forward_step_func,
                     import wandb
                     wandb_writer.log(
                         {
-                            key: wandb.Histogram(np_histogram=(hist.cpu().numpy(), bins)),
+                            key: wandb.Histogram(np_histogram=(hist.cpu().numpy(), bins.cpu().numpy())),
                             f'{key} gt0': gt0
                         }, iteration
                     )
-            total_gt0 = torch.mean(torch.tensor(gt0s))
+            total_gt0 = torch.mean(torch.tensor(gt0s)) # these should all have equal # of params, works for now
             writer.add_scalar('total gt0', total_gt0, iteration)
             if wandb_writer and is_last_rank():
                 wandb_writer.log({'total gt0': total_gt0}, iteration)
