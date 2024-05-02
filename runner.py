@@ -243,8 +243,8 @@ def get_training_arguments(args: Arguments, current: dict) -> dict:
     else:
         res["train_iters"] = int(args.num_tokens / (batch_size * seq_length))
     final_tokens = res["train_iters"] * batch_size * seq_length
-    print(f"Training for {res["train_iters"]} iterations and {final_tokens/1e9:.2f}B tokens")
-    res["lr_decay_iters"] = int(args.steps * args.lr_decay_time_fraction)
+    print(f"Training for {res['train_iters']} iterations and {final_tokens/1e9:.2f}B tokens")
+    res["lr_decay_iters"] = int(res["train_iters"] * args.lr_decay_time_fraction)
     res["lr_warmup_fraction"] = args.lr_warmup_fraction
     res["lr_decay_style"] = "cosine"
     res["min_lr"] = args.learning_rate * 0.1
