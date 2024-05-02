@@ -24,6 +24,7 @@ class Arguments:
 
     # running args
     steps: int = 1000
+    num_tokens: Optional[float] = None
     run_ldconfig: bool = False
     ## model loading
     load_repo: Optional[str] = None
@@ -86,7 +87,8 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument(
         "--wandb-project", type=str, default="megatron-dsparse", help="Wandb project"
     )
-    parser.add_argument("--steps", type=int, default=1000, help="Number of steps to run")
+    parser.add_argument("--num-tokens", type=float, default=None, help="Number of tokens to train for")
+    parser.add_argument("--steps", type=int, default=None, help="Number of steps to run")
     parser.add_argument(
         "--lr-warmup-fraction", type=float, default=0.01, help="Learning rate warmup fraction"
     )
@@ -131,6 +133,8 @@ def parse_args() -> Tuple[Arguments, list]:
 
     if args.load_ccla_config:
         assert not args.load_repo, "Cannot specify both load-repo and load-ccla-config"
+
+    assert bool(args.num_tokens) != bool(args.steps), "Must specify only one of num_tokens, steps"
 
     return Arguments(**vars(args)), unknown
 
@@ -215,7 +219,7 @@ def get_model_arch_arguments(args: Arguments) -> dict:
     return res
 
 
-def get_training_arguments(args: Arguments) -> dict:
+def get_training_arguments(args: Arguments, current: dict) -> dict:
     if args.load_ccla_config:
         lr = get_ccla_config(args.load_ccla_config, args.hf_cache_dir, args.data_dir)["lr"]
         if lr != args.learning_rate:
@@ -232,7 +236,14 @@ def get_training_arguments(args: Arguments) -> dict:
     if args.load_repo and not args.reload:
         res["finetune"] = ()
 
-    res["train_iters"] = args.steps
+    batch_size = current["global_batch_size"]
+    seq_length =  current["seq_length"]
+    if args.steps:
+        res["train_iters"] = args.steps
+    else:
+        res["train_iters"] = int(args.num_tokens / (batch_size * seq_length))
+    final_tokens = res["train_iters"] * batch_size * seq_length
+    print(f"Training for {res["train_iters"]} iterations and {final_tokens/1e9:.2f}B tokens")
     res["lr_decay_iters"] = int(args.steps * args.lr_decay_time_fraction)
     res["lr_warmup_fraction"] = args.lr_warmup_fraction
     res["lr_decay_style"] = "cosine"
@@ -288,9 +299,9 @@ def main():
     train_args = (
         get_checkpoint_load_arguments(args)
         | get_model_arch_arguments(args)
-        | get_training_arguments(args)
         | get_logging_arguments(args)
     )
+    train_args |= get_training_arguments(args, train_args)
     torchrun_args = get_torchrun_args(args)
 
     # print environment variables
