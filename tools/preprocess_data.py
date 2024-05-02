@@ -146,22 +146,23 @@ class Partition(object):
     def process_json_file(self, file_name):
         input_file_name, output_prefix = file_name
         print("Opening", input_file_name)
-        if os.path.isdir(input_file_name) or "*" in input_file_name:
-            def generator():
+        def generator():
+            if os.path.isdir(input_file_name) or "*" in input_file_name:
                 paths = glob.glob(input_file_name)
-                for path in paths:
-                    if path.endswith(".zst"):
-                        import zstandard as zstd
-                        zstd_ctx = zstd.ZstdDecompressor()
-                        fin = zstd_ctx.stream_reader(open(path, 'rb'))
-                        fin = io.TextIOWrapper(fin, encoding='utf-8')
-                    else:
-                        fin = open(path, 'r', encoding='utf-8')
-                    for line in fin:
-                        yield line
-            fin = generator()
-        else:
-            fin = open(input_file_name, 'r', encoding='utf-8')
+            else:
+                paths = [input_file_name]
+            for path in paths:
+                if path.endswith(".zst"):
+                    print("Decoding zstd file,", path)
+                    import zstandard as zstd
+                    zstd_ctx = zstd.ZstdDecompressor()
+                    fin = zstd_ctx.stream_reader(open(path, 'rb'))
+                    fin = io.TextIOWrapper(fin, encoding='utf-8')
+                else:
+                    fin = open(path, 'r', encoding='utf-8')
+                for line in fin:
+                    yield line
+        fin = generator()
 
         startup_start = time.time()
         encoder = Encoder(self.args)

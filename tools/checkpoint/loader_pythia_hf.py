@@ -4,13 +4,10 @@ import json
 import os
 import sys
 import torch
-from arg_utils import ModelDescriptor
+from arg_utils import ModelDescriptor, ARG_SETTERS
 import safetensors.torch as sttorch
-from transformers import GPTNeoXConfig, LlamaConfig, OlmoConfig
-from tokenizers import Tokenizer
 from huggingface_hub import hf_hub_download 
 from huggingface_hub.utils import EntryNotFoundError, LocalEntryNotFoundError
-from typing import Optional
 
 
 def try_get_file(
@@ -72,123 +69,6 @@ def add_arguments(parser):
     group.add_argument(
         '--megatron-path', type=str, default=None, help='Base directory of the megatron repository'
     )
-
-
-def load_llama_args(args, margs):
-
-    config = LlamaConfig.from_pretrained(
-        args.repo, revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-    tokenizer_file = hf_hub_download(
-        args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-    tokenizer = Tokenizer.from_file(tokenizer_file)
-    # Update Megatron args.
-    margs.seq_length = config.max_position_embeddings
-    margs.max_position_embeddings = config.max_position_embeddings
-    margs.hidden_size = config.hidden_size
-    margs.num_attention_heads = config.num_attention_heads
-    margs.num_layers = config.num_hidden_layers
-    margs.global_batch_size = 1024
-    margs.norm_epsilon = config.rms_norm_eps
-    margs.iteration = 1  # '0', 'release' don't work
-    margs.position_embedding_type = "rope"
-    margs.rotary_base = config.rope_theta
-    margs.act_fn = 'silu'
-    margs.glu = True
-    margs.tokenizer_type = "HFTokenizer"
-    margs.vocab_file = tokenizer_file
-    margs.bf16 = True
-    margs.normalization = "RMSNorm"
-    margs.add_bias_linear = False
-    margs.untie_embeddings_and_output_weights = True
-    margs.vocab_size = tokenizer.get_vocab_size()
-    margs.ffn_hidden_size = config.intermediate_size
-
-    if hasattr(config, "num_key_value_heads"):
-        margs.group_query_attention = True
-        margs.num_query_groups = config.num_key_value_heads
-
-
-def load_pythia_args(args, margs):
-
-    # Read Llama args.
-    config = GPTNeoXConfig.from_pretrained(args.repo, revision=args.revision)
-    tokenizer_file = hf_hub_download(
-        args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-    tokenizer = Tokenizer.from_file(tokenizer_file)
-    # Update Megatron args.
-    margs.seq_length = config.max_position_embeddings
-    margs.max_position_embeddings = margs.seq_length
-    margs.hidden_size = config.hidden_size
-    margs.num_attention_heads = config.num_attention_heads
-    margs.num_layers = config.num_hidden_layers
-    margs.global_batch_size = 1024
-    margs.norm_epsilon = config.layer_norm_eps
-    margs.iteration = 1  # '0', 'release' don't work
-    margs.position_embedding_type = "rope"
-    margs.rotary_percent = config.rotary_pct
-    margs.use_parallel_residual = config.use_parallel_residual
-    margs.tokenizer_type = "HFTokenizer"
-    margs.vocab_file = tokenizer_file
-    margs.fp16 = config.torch_dtype == "float16"
-    margs.bf16 = config.torch_dtype == "bfloat16"
-    margs.normalization = "LayerNorm"
-    margs.untie_embeddings_and_output_weights = not config.tie_word_embeddings
-    margs.vocab_size = tokenizer.get_vocab_size()
-    margs.ffn_hidden_size = config.intermediate_size
-    margs.init_method_std = config.initializer_range
-    if config.hidden_act == "relu":
-        margs.act_fn = 'relu'
-    else:
-        assert config.hidden_act == "gelu"
-        margs.act_fn = 'gelu'
-    margs.hidden_dropout = config.hidden_dropout
-    margs.attention_dropout = config.attention_dropout
-    margs.weight_decay = 0.01
-    assert config.attention_bias
-
-def load_olmo_args(args, margs):
-    config = OlmoConfig.from_pretrained(args.repo, revision=args.revision, cache_dir=args.hf_cache_dir)
-    tokenizer_file = hf_hub_download(
-        args.repo, "tokenizer.json", revision=args.revision, cache_dir=args.hf_cache_dir
-    )
-    tokenizer = Tokenizer.from_file(tokenizer_file)
-    # Update Megatron args.
-    margs.seq_length = config.max_sequence_length
-    margs.max_position_embeddings = config.max_sequence_length
-    margs.hidden_size = config.d_model
-    margs.num_attention_heads = config.n_heads
-    margs.num_layers = config.n_layers
-    margs.global_batch_size = 2048
-    margs.norm_epsilon = 1e-5
-    margs.iteration = 1  # '0', 'release' don't work
-    margs.position_embedding_type = "rope"
-    margs.rotary_base = config.rope_theta
-    margs.act_fn = 'silu'
-    if config.mlp_hidden_size:
-        margs.ffn_hidden_size = config.mlp_hidden_size // 2
-    else:
-        margs.ffn_hidden_size = config.d_model * config.mlp_ratio // 2
-    assert config.activation_type == 'swiglu'
-    margs.glu = True
-    margs.tokenizer_type = "HFTokenizer"
-    margs.vocab_size = config.vocab_size
-    assert tokenizer.get_vocab_size() == config.vocab_size
-    margs.vocab_file = tokenizer_file
-    margs.bf16 = True
-    margs.normalization = "NonParametricLayerNorm"
-    margs.add_bias_linear = False
-    margs.untie_embeddings_and_output_weights = not config.weight_tying
-    margs.vocab_size = tokenizer.get_vocab_size()
-
-ARG_SETTERS = {
-    "pythia": load_pythia_args,
-    "llama": load_llama_args,
-    "olmo": load_olmo_args,
-}
-
 
 def pythia_get_tensor(state_dict, key, _margs, layer=None):
     prefix = ""
@@ -266,6 +146,7 @@ def olmo_get_tensor(state_dict, key, margs, layer=None):
         "word embeddings": "model.transformer.wte.weight",
         "dense weight": "attn_out.weight",
         "mlp l1 weight": "ff_out.weight",
+        "output layer weight": "model.transformer.ff_out.weight",
     }
     if key in mapper:
         return state_dict.pop(prefix + mapper[key])
@@ -340,12 +221,8 @@ def _load_checkpoint(queue, args):
     ]
 
     margs = parse_args()
-    if args.hf_model_type == "pythia":
-        load_pythia_args(args, margs)
-    elif args.hf_model_type == "llama":
-        load_llama_args(args, margs)
-    elif args.hf_model_type == "olmo":
-        load_olmo_args(args, margs)
+    if args in ARG_SETTERS:
+        ARG_SETTERS[args.hf_model_type](args.repo, args.verision, args.cache_dir, args.hf_model_type, set_args=margs)
     else:
         print(f"Unknown model type {args.hf_model_type}. Exiting.")
         queue.put("exit")

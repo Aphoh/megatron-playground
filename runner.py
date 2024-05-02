@@ -3,15 +3,12 @@ import subprocess
 import argparse
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-from transformers import GPTNeoXConfig, LlamaConfig, OlmoConfig
-from tokenizers import Tokenizer
-from huggingface_hub import hf_hub_download
 from filelock import FileLock
+from tools.checkpoint.arg_utils import ARG_SETTERS
+from runner_utils import get_ccla_config
 import socket
 from pathlib import Path
-import json
 import torch
-import math
 
 
 @dataclass
@@ -32,6 +29,7 @@ class Arguments:
     load_repo: Optional[str] = None
     load_rev: str = "main"
     load_type: Optional[str] = None
+    load_ccla_config: Optional[int] = None
     ## paths
     data_dir: str = "/data"
     checkpoint_dir: str = "/checkpoint"
@@ -47,6 +45,7 @@ class Arguments:
     # Should be bf16, fp16 or fp32
     dtype: str = "bf16"
     do_save: bool = True
+    reload: bool = False
 
 
 def parse_args() -> Tuple[Arguments, list]:
@@ -72,6 +71,12 @@ def parse_args() -> Tuple[Arguments, list]:
     )
     parser.add_argument(
         '--hf-cache-dir', type=str, default="/hf_cache", help='Location of huggingface cache'
+    )
+    parser.add_argument(
+        "--load-ccla-config",
+        type=int,
+        default=None,
+        help="Load a ccla config by number of million params",
     )
     parser.add_argument("--learning-rate", type=float, default=6e-4, help="Learning rate")
     parser.add_argument("--lr-decay-time-fraction", type=float, default=1.0, help="Learning rate")
@@ -99,7 +104,12 @@ def parse_args() -> Tuple[Arguments, list]:
         choices=["bf16", "fp16", "fp32"],
         help="Data type to use",
     )
-    parser.add_argument("--no-save", action="store_false", dest="do_save", help="Don't save checkpoints")
+    parser.add_argument(
+        "--no-save", action="store_false", dest="do_save", help="Don't save checkpoints"
+    )
+    parser.add_argument(
+        "--reload", action="store_true", help="Reload the model from the checkpoint"
+    )
 
     args, unknown = parser.parse_known_args()
     if args.rank is None:
@@ -119,12 +129,16 @@ def parse_args() -> Tuple[Arguments, list]:
     if unknown and args.rank == 0:
         print(f"Got unknown arguments, passing to megatron: {unknown}")
 
+    if args.load_ccla_config:
+        assert not args.load_repo, "Cannot specify both load-repo and load-ccla-config"
+
     return Arguments(**vars(args)), unknown
 
 
 def print_rank_0(args: Arguments, *varargs, **kwargs):
     if args.rank == 0:
         print(*varargs, **kwargs)
+
 
 def arg_dict_to_list(args: dict) -> List[str]:
     res = []
@@ -141,7 +155,9 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
     res = {"wandb_save_dir": Path(args.checkpoint_dir) / args.name / "wandb"}
     if args.do_save:
         res["save"] = Path(args.checkpoint_dir) / args.name
-    if args.load_repo:
+    if args.reload:
+        res["load"] = Path(args.checkpoint_dir) / args.name
+    elif args.load_repo:
         model_name = args.load_repo.split("/")[-1].lower()
         model_loc = Path(args.checkpoint_dir) / "base-ckpts" / model_name
         load_loc = model_loc / args.load_rev
@@ -163,7 +179,7 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
             res["load"] = load_loc
             load_type = args.load_type
             if load_type == "llama3":
-                load_type = "llama" # converter doesn't care about llama1/2 v.s. 3
+                load_type = "llama"  # converter doesn't care about llama1/2 v.s. 3
             if not load_loc.exists():
                 print("RANK", args.rank, "converting checkpoint for", args.load_repo)
                 print_rank_0(args, f"Downloading checkpoint from {args.load_repo}")
@@ -184,149 +200,36 @@ def get_checkpoint_load_arguments(args: Arguments) -> dict:
                 print(args, f"Successfully converted checkpoint to {load_loc}")
     return res
 
-def get_pythia_args(args: Arguments) -> dict:
-    res = {}
-    print_rank_0(args, f"Loading Pythia config from {args.load_repo}")
-    pythia_config = GPTNeoXConfig.from_pretrained(args.load_repo, revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    # Arguments from the config
-    res["hidden_size"] = pythia_config.hidden_size
-    res["init_method_std"] = pythia_config.initializer_range
-    res["ffn_hidden_size"] = pythia_config.intermediate_size
-    res["norm_epsilon"] = pythia_config.layer_norm_eps
-    res["max_position_embeddings"] = pythia_config.max_position_embeddings
-    res["num_attention_heads"] = pythia_config.num_attention_heads
-    res["num_layers"] = pythia_config.num_hidden_layers
-    res["rotary_percent"] = pythia_config.rotary_pct
-    if not pythia_config.tie_word_embeddings:
-        res["untie_embeddings_and_output_weights"] = ()
-
-    if pythia_config.use_parallel_residual:
-        res["use_parallel_residual"] = ()
-
-    # static arguments
-    res["position_embedding_type"] = "rope"
-    res["normalization"] = "LayerNorm"
-
-    # download tokenizer
-    tokenizer_path = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    res["vocab_file"] = tokenizer_path
-    res["tokenizer_type"] = "HFTokenizer"
-    res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
-    res["attention_dropout"] = 0.0
-    res["hidden_dropout"] = 0.0
-    res["weight_decay"] = 0.01
-    res["seq_length"] = 2048
-    res["transformer_impl"] = "transformer_engine"
-
-    return res
-
-def get_llama_args(args: Arguments) -> dict:
-    res = {}
-    print_rank_0(args, f"Loading Llama config from {args.load_repo}")
-    config = LlamaConfig.from_pretrained(args.load_repo, revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    tokenizer_file = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    res["seq_length"] = config.max_position_embeddings
-    res["max_position_embeddings"] = config.max_position_embeddings
-    res["hidden_size"] = config.hidden_size
-    res["num_attention_heads"] = config.num_attention_heads
-    res["num_layers"] = config.num_hidden_layers
-    res["global_batch_size"] = 1024
-    res["norm_epsilon"] = "%f" % config.rms_norm_eps # this is weird for some reason
-    res["position_embedding_type"] = "rope"
-    res["rotary_base"] = int(config.rope_theta)
-    res["act_fn"] = "silu"
-    res["glu"] = ()
-    res["tokenizer_type"] = "HFTokenizer"
-    res["vocab_file"] = tokenizer_file
-    res["bf16"] = ()
-    res["normalization"] = "RMSNorm"
-    res["disable_bias_linear"] = ()
-    res["untie_embeddings_and_output_weights"] = ()
-    res["ffn_hidden_size"] = config.intermediate_size
-
-    if hasattr(config, "num_key_value_heads"):
-        res["group_query_attention"] = ()
-        res["num_query_groups"] = config.num_key_value_heads
-
-    file = f"slimpj-{args.load_type}-c1_text_document"
-    res["data_path"] = Path(args.data_dir) / "slimpj" / file
-    res["attention_dropout"] = 0.0
-    res["hidden_dropout"] = 0.0
-    res["weight_decay"] = 0.01
-    res["transformer_impl"] = "transformer_engine"
-
-    return res
-
-def get_olmo_args(args: Arguments) -> dict:
-    res = {}
-    print_rank_0(args, f"Loading OLMo config from {args.load_repo}")
-    config = OlmoConfig.from_pretrained(args.load_repo, revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    tokenizer_file = hf_hub_download(args.load_repo, "tokenizer.json", revision=args.load_rev, cache_dir=args.hf_cache_dir)
-    tokenizer = Tokenizer.from_file(tokenizer_file)
-    res["seq_length"] = config.max_sequence_length
-    res["max_position_embeddings"] = config.max_sequence_length
-    res["hidden_size"] = config.d_model
-    res["num_attention_heads"] = config.n_heads
-    res["num_layers"] = config.n_layers
-    res["global_batch_size"] = 2048
-    res["norm_epsilon"] = 1e-5
-    res["position_embedding_type"] = "rope"
-    res["rotary_base"] = int(config.rope_theta)
-    res["act_fn"] = "silu"
-    if config.mlp_hidden_size:
-        res["ffn_hidden_size"] = config.mlp_hidden_size // 2
-    else:
-        res["ffn_hidden_size"] = config.d_model * config.mlp_ratio // 2
-    assert config.activation_type == 'swiglu'
-    res["glu"] = ()
-    res["tokenizer_type"] = "HFTokenizer"
-    res["vocab_file"] = tokenizer_file
-    res["bf16"] = ()
-    res["normalization"] = "NonParametricLayerNorm"
-    res["disable_bias_linear"] = ()
-    if not config.weight_tying:
-        res["untie_embeddings_and_output_weights"] = ()
-
-    res["data_path"] = Path(args.data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document"
-    res["attention_dropout"] = 0.0
-    res["hidden_dropout"] = 0.0
-    res["weight_decay"] = 0.1 # TODO: is this optimal?
-    res["transformer_impl"] = "transformer_engine"
-    assert config.vocab_size == tokenizer.get_vocab_size(), f"Vocab size mismatch, cfg: {config.vocab_size} != tokenizer: {tokenizer.get_vocab_size()}"
-    res["vocab_size"] = config.vocab_size
-
-    return res
 
 def get_model_arch_arguments(args: Arguments) -> dict:
     res = {"use_mcore_models": ()}
     if args.load_repo:
-        if args.load_type == "pythia":
-            res |= get_pythia_args(args)
-        elif args.load_type == "llama" or args.load_type == "llama3":
-            res |= get_llama_args(args)
-        elif args.load_type == "olmo":
-            res |= get_olmo_args(args)
+        if args.load_type in ARG_SETTERS:
+            res |= ARG_SETTERS[args.load_type](
+                args.load_repo, args.load_rev, args.hf_cache_dir, args.data_dir, args.load_type
+            )
+        else:
+            raise ValueError(f"Unknown load type {args.load_type}")
+    elif args.load_ccla_config:
+        res |= get_ccla_config(args.load_ccla_config, args.hf_cache_dir, args.data_dir)
     return res
 
 
 def get_training_arguments(args: Arguments) -> dict:
+    if args.load_ccla_config:
+        lr = get_ccla_config(args.load_ccla_config, args.hf_cache_dir, args.data_dir)["lr"]
+        if lr != args.learning_rate:
+            print_rank_0(
+                args, f"Overriding learning rate {args.learning_rate} with {lr} from ccla config"
+            )
+            args.learning_rate = lr
     res = {"lr": args.learning_rate}
     if args.dtype == "bf16":
         res["bf16"] = ()
     elif args.dtype == "fp16":
         res["fp16"] = ()
 
-    if args.load_repo and args.load_type == "pythia":
-        res["adam_beta1"] = 0.9
-        res["adam_beta2"] = 0.95
-        res["adam_eps"] = 1e-8
-        res["global_batch_size"] = 1024
-        res["finetune"] = ()
-    elif args.load_repo and args.load_type in ["llama", "llama3"]:
-        res["adam_beta1"] = 0.9
-        res["adam_beta2"] = 0.95
-        res["adam_eps"] = 1e-5
-        res["global_batch_size"] = 1024
+    if args.load_repo and not args.reload:
         res["finetune"] = ()
 
     res["train_iters"] = args.steps
@@ -352,27 +255,6 @@ def get_logging_arguments(args: Arguments) -> dict:
     if args.do_save:
         res["save_interval"] = 1000
     return res
-
-
-def calc_ideal_num_experts(dm1, dm2, c, H1, H2, nl1, nl2, v):
-    # First term
-    term1 = -(2 * dm2 * (2 * c + H2)) / c
-    # Second term
-    term2 = -v / nl2
-    # Third term
-    term3 = (dm1 * (2 * dm1 * (2 + H1) * nl1 + v)) / (dm2 * nl2)
-
-    # Total quantity
-    total_quantity = term1 + term2 + term3
-    return total_quantity
-
-
-def round_down_to_divisor(k, n):
-    while k > 0:
-        if n % k == 0:
-            return k
-        k -= 1
-    return None  # In case no divisor is found which should not happen unless k <= 0
 
 
 def get_torchrun_args(args: Arguments) -> dict:
@@ -422,8 +304,7 @@ def main():
     print_rank_0(args, f"Running command: {' '.join(res_args)}", flush=True)
     os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "1"
     subprocess.run(
-        res_args,
-        env=os.environ,
+        res_args, env=os.environ,
     )
 
 
