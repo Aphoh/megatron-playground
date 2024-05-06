@@ -368,17 +368,15 @@ def compute_wandb_extras(args):
     num_experts = 1 if config.num_moe_experts is None else config.num_moe_experts
     num_ffn_parameters_per_exp = config.num_layers * 2 * config.hidden_size * config.ffn_hidden_size
     num_ffn_parameters = num_ffn_parameters_per_exp * num_experts
-    num_attn_parameters = 2 * args.num_layers * args.hidden_size * args.hidden_size * (
-        (args.num_query_groups / args.num_attention_heads) + 1
-    )
-
-    embedding_size = args.hidden_size * args.padded_vocab_size
+    query_proj_size = config.kv_channels * config.num_attention_heads
+    kv_proj_size = config.kv_channels * config.num_query_groups
+    num_attn_parameters = config.num_layers * config.hidden_size * (query_proj_size + 2 * kv_proj_size)
+    num_attn_parameters += config.num_layers * query_proj_size * config.hidden_size
+    num_parameters_in_embedding_layers = config.hidden_size * args.padded_vocab_size
     if args.untie_embeddings_and_output_weights:
-        num_parameters_in_embedding_layers = 2 * embedding_size
-    else:
-        num_parameters_in_embedding_layers = embedding_size
+        num_parameters_in_embedding_layers *= 2
     num_total_parameters = num_ffn_parameters + num_attn_parameters + num_parameters_in_embedding_layers
-    flops_per_token = 2 * (num_ffn_parameters_per_exp + num_attn_parameters + num_parameters_in_embedding_layers)
+    flops_per_token = 2 * num_total_parameters
     return {
         "n_params": num_total_parameters,
         "n_ffn_params": num_ffn_parameters,

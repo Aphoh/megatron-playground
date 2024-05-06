@@ -51,6 +51,20 @@ ccla_configs = {
         'num_layers': 21,
         'lr': 0.0003,
     },
+    724: {
+        'hidden_size': 1536,
+        'ffn_hidden_size': 6144,
+        'num_attention_heads': 12,
+        'num_layers': 24,
+        'lr': 0.0003,
+    },
+    893: {
+        'hidden_size': 1792,
+        'ffn_hidden_size': 7168,
+        'num_attention_heads': 14,
+        'num_layers': 23,
+        'lr': 0.0003,
+    },
     1018: {
         'hidden_size': 1792,
         'ffn_hidden_size': 7168,
