@@ -361,21 +361,47 @@ def get_batch_on_this_tp_rank(data_iterator):
     return batch
 
 
+
 def compute_wandb_extras(args):
     # Group Query Attention.
     config = core_transformer_config_from_args(args)
-    # MoE.
-    num_experts = 1 if config.num_moe_experts is None else config.num_moe_experts
-    num_ffn_parameters_per_exp = config.num_layers * 2 * config.hidden_size * config.ffn_hidden_size
+    return compute_num_params_dict(
+        num_moe_experts=config.num_moe_experts,
+        num_layers=config.num_layers,
+        hidden_size=config.hidden_size,
+        ffn_hidden_size=config.ffn_hidden_size,
+        kv_channels=config.kv_channels,
+        num_query_groups=config.num_query_groups,
+        num_attention_heads=config.num_attention_heads,
+        padded_vocab_size=args.padded_vocab_size,
+        untie_embeddings_and_output_weights=args.untie_embeddings_and_output_weights,
+    )
+
+
+def compute_num_params_dict(
+    num_moe_experts,
+    num_layers,
+    hidden_size,
+    ffn_hidden_size,
+    kv_channels,
+    num_query_groups,
+    num_attention_heads,
+    padded_vocab_size,
+    untie_embeddings_and_output_weights,
+):
+    num_experts = 1 if num_moe_experts is None else num_moe_experts
+    num_ffn_parameters_per_exp = num_layers * 2 * hidden_size * ffn_hidden_size
     num_ffn_parameters = num_ffn_parameters_per_exp * num_experts
-    query_proj_size = config.kv_channels * config.num_attention_heads
-    kv_proj_size = config.kv_channels * config.num_query_groups
-    num_attn_parameters = config.num_layers * config.hidden_size * (query_proj_size + 2 * kv_proj_size)
-    num_attn_parameters += config.num_layers * query_proj_size * config.hidden_size
-    num_parameters_in_embedding_layers = config.hidden_size * args.padded_vocab_size
-    if args.untie_embeddings_and_output_weights:
+    query_proj_size = kv_channels * num_attention_heads
+    kv_proj_size = kv_channels * num_query_groups
+    num_attn_parameters = num_layers * hidden_size * (query_proj_size + 2 * kv_proj_size)
+    num_attn_parameters += num_layers * query_proj_size * hidden_size
+    num_parameters_in_embedding_layers = hidden_size * padded_vocab_size
+    if untie_embeddings_and_output_weights:
         num_parameters_in_embedding_layers *= 2
-    num_total_parameters = num_ffn_parameters + num_attn_parameters + num_parameters_in_embedding_layers
+    num_total_parameters = (
+        num_ffn_parameters + num_attn_parameters + num_parameters_in_embedding_layers
+    )
     flops_per_token = 2 * num_total_parameters
     return {
         "n_params": num_total_parameters,
