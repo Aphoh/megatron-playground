@@ -82,7 +82,7 @@ def get_ccla_config(name, hf_cache_dir: str, data_dir: str):
         "adam_beta2": 0.95,
         "adam_eps": 1e-8,
         "tokenizer_type": "HFTokenizer",
-        "vocab_file": hf_hub_download("EleutherAI/pythia-70m", "tokenizer.json", revision="main", hf_cache_dir=hf_cache_dir),
+        "vocab_file": hf_hub_download("EleutherAI/pythia-70m", "tokenizer.json", revision="main", cache_dir=hf_cache_dir),
         "data_path": Path(data_dir) / "slimpj" / "slimpj-neox-c1c2_text_document",
         "init_method_std": 0.02,
     }
