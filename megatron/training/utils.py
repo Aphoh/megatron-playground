@@ -375,6 +375,7 @@ def compute_wandb_extras(args):
         num_attention_heads=config.num_attention_heads,
         padded_vocab_size=args.padded_vocab_size,
         untie_embeddings_and_output_weights=args.untie_embeddings_and_output_weights,
+        glu=config.gated_linear_unit
     )
 
 
@@ -388,9 +389,15 @@ def compute_num_params_dict(
     num_attention_heads,
     padded_vocab_size,
     untie_embeddings_and_output_weights,
+    glu,
 ):
     num_experts = 1 if num_moe_experts is None else num_moe_experts
-    num_ffn_parameters_per_exp = num_layers * 2 * hidden_size * ffn_hidden_size
+    if glu:
+        l1 = 2 * ffn_hidden_size * hidden_size
+        l2 = ffn_hidden_size * hidden_size
+        num_ffn_parameters_per_exp = num_layers * (l1 + l2)
+    else:
+        num_ffn_parameters_per_exp = num_layers * 2 * hidden_size * ffn_hidden_size
     num_ffn_parameters = num_ffn_parameters_per_exp * num_experts
     query_proj_size = kv_channels * num_attention_heads
     kv_proj_size = kv_channels * num_query_groups

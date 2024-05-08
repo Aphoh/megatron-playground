@@ -782,8 +782,9 @@ def _add_network_size_args(parser):
     group.add_argument('--untie-embeddings-and-output-weights', action='store_true',
                        help='Untie embeddings and output weights.'),
     group.add_argument("--act-fn", type=str, default="gelu",
-                       choices=["gelu", "gelu_exact", "relu", "squared_relu", "silu"],
+                       choices=["gelu", "gelu_exact", "relu", "squared_relu", "silu", "swash"],
                        help="Activation function to use.")
+    group.add_argument("--swash-alpha", type=float, default=1.0, help="Beta parameter for beta activation function.")
     group.add_argument("--glu", default=False, action="store_true", help="Use gated linear units.")
     return parser
 

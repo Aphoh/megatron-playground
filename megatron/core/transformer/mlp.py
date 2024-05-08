@@ -13,16 +13,10 @@ from megatron.core.dist_checkpointing.mapping import (
     ShardedStateDict,
     ShardedTensorFactory,
 )
-from megatron.core.fusions.fused_bias_geglu import bias_geglu_impl
-from megatron.core.fusions.fused_bias_gelu import bias_gelu_impl
-from megatron.core.fusions.fused_bias_swiglu import bias_swiglu_impl
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.tensor_parallel import ColumnParallelLinear
-import megatron.core.tensor_parallel as tp
 import megatron.core.activations as mact
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 
 
 @dataclass
@@ -62,13 +56,14 @@ class MLPActivation(MegatronModule):
 
     def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
         should_apply_eff_loss = self.training and self.config.mlp_eff_loss
+        kwargs = {"a": self.config.swash_alpha} if self.config.activation_func == F.swash else {}
         if self.config.bias_activation_fusion:
             fused_fn = mact.get_fused_bias_act(self.config.activation_func, self.config.gated_linear_unit)
             assert fused_fn is not None, "Could not find fused function for bias activation fusion"
             assert self.config.add_bias_linear, "Bias fusion requires add_bias_linear"
             assert not should_apply_eff_loss, "Eff loss not supported with bias fusion"
             assert bias_parallel is not None, "Bias fusion requires bias"
-            intermediate_parallel = fused_fn(intermediate_parallel, bias_parallel)
+            intermediate_parallel = fused_fn(intermediate_parallel, bias_parallel, **kwargs)
         elif should_apply_eff_loss:
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
@@ -76,18 +71,18 @@ class MLPActivation(MegatronModule):
                 def glu(x):
                     x = torch.chunk(x, 2, dim=-1)
                     x0 = self.apply_eff_loss(x[0])
-                    return self.config.activation_func(x0) * x[1]
+                    return self.config.activation_func(x0, **kwargs) * x[1]
 
                 intermediate_parallel = glu(intermediate_parallel)
             else:
                 intermediate_parallel = self.apply_eff_loss(intermediate_parallel)
-                intermediate_parallel = self.activation_func(intermediate_parallel)
+                intermediate_parallel = self.config.activation_func(intermediate_parallel, **kwargs)
         else:
             fused_fn = mact.get_fused_act(self.config.activation_func, self.config.gated_linear_unit)
             assert fused_fn is not None, "Could not find function for activation"
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
-            intermediate_parallel = fused_fn(intermediate_parallel)
+            intermediate_parallel = fused_fn(intermediate_parallel, **kwargs)
 
         return intermediate_parallel
 
@@ -120,7 +115,7 @@ class MLP(MegatronModule):
 
         self.config: TransformerConfig = config
 
-        self.input_size = input_size if input_size != None else self.config.hidden_size
+        self.input_size = input_size if input_size is not None else self.config.hidden_size
 
         # If this is a gated linear unit we double the output width, see https://arxiv.org/pdf/2002.05202.pdf
         ffn_hidden_size = self.config.ffn_hidden_size

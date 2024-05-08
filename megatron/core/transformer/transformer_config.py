@@ -73,6 +73,9 @@ class TransformerConfig(ModelParallelConfig):
     activation_func: Callable = mact.gelu_approx
     """Activation function to use for the non-linearity in the MLP."""
 
+    swash_alpha: float = 1.0
+    """Alpha value for the swash activation function."""
+
     num_moe_experts: int = None
     """Number of experts to use for MoE layer. When set, it replaces MLP with MoE layer. Set to None
     for no MoE."""
