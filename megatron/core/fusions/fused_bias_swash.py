@@ -7,7 +7,7 @@ def swash(x, a: float=1.0):
     return x * F.sigmoid(a * x)
 
 @torch.compile
-def swash_bias(x, b, a: float=1.0):
+def bias_swash(x, b, a: float=1.0):
     return x * F.sigmoid(a * x + b)
 
 @torch.compile
