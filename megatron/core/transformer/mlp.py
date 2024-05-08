@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 
 from megatron.core import parallel_state
 from megatron.core.dist_checkpointing import ShardedTensor
@@ -56,7 +55,7 @@ class MLPActivation(MegatronModule):
 
     def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
         should_apply_eff_loss = self.training and self.config.mlp_eff_loss
-        kwargs = {"a": self.config.swash_alpha} if self.config.activation_func == F.swash else {}
+        kwargs = {"a": self.config.swash_alpha} if self.config.activation_func == mact.swash else {}
         if self.config.bias_activation_fusion:
             fused_fn = mact.get_fused_bias_act(self.config.activation_func, self.config.gated_linear_unit)
             assert fused_fn is not None, "Could not find fused function for bias activation fusion"
