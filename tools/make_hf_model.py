@@ -2,8 +2,6 @@ import sys
 from pathlib import Path
 from transformers import LlamaConfig, LlamaForCausalLM, AutoTokenizer
 import torch
-import argparse
-import inspect
 import types
 import enum
 
@@ -109,6 +107,7 @@ def main():
     args = ckpt["args"]
     
     assert args.normalization == "RMSNorm", "Only RMSNorm is supported"
+    assert args.glu, "Only glu is supported"
     assert not (args.add_qkv_bias and not args.add_bias_linear)
     tokenizer = AutoTokenizer.from_pretrained(sys.argv[2])
     config = LlamaConfig(
