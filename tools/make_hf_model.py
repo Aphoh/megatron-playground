@@ -4,6 +4,7 @@ from transformers import LlamaConfig, LlamaForCausalLM, AutoTokenizer
 import torch
 import types
 import enum
+import argparse
 
 class ModelType(enum.Enum):
     encoder_or_decoder = 1
@@ -93,11 +94,12 @@ def rewrite_state_dict(state_dict, margs):
         state_dict[to_prefix + "mlp.up_proj.bias"] = up_proj_bias
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python make_hf_model.py <model_name> <tokenizer_path>")
-        sys.exit(1)
-
-    model_path = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description="Convert a model to HuggingFace format")
+    parser.add_argument("--model", type=str, help="Path to the model")
+    parser.add_argument("--tokenizer", type=str, help="Path to the tokenizer")
+    parser.add_argument("--output", type=str, help="Path to the model output directory")
+    cmd_args = parser.parse_args()
+    model_path = Path(cmd_args.model)
     assert model_path.exists(), f"Model {model_path} does not exist"
     with open(model_path / "latest_checkpointed_iteration.txt") as f:
         iteration = int(f.read().strip())
@@ -105,11 +107,15 @@ def main():
     assert pt_file.exists(), f"PyTorch file {pt_file} does not exist"
     ckpt = torch.load(pt_file, map_location="cpu")
     args = ckpt["args"]
+
+    out_path = Path(cmd_args.output)
+    if out_path.exists():
+        print(f"Warning: output path {out_path} already exists, overwriting")
     
     assert args.normalization == "RMSNorm", "Only RMSNorm is supported"
     assert args.glu, "Only glu is supported"
     assert not (args.add_qkv_bias and not args.add_bias_linear)
-    tokenizer = AutoTokenizer.from_pretrained(sys.argv[2])
+    tokenizer = AutoTokenizer.from_pretrained(cmd_args.tokenizer)
     config = LlamaConfig(
         vocab_size=args.padded_vocab_size,
         hidden_size=args.hidden_size,
@@ -131,7 +137,6 @@ def main():
 
     model.load_state_dict(sd)
 
-    out_path = model_path.parent / f"{model_path.name}_hf"
     model.save_pretrained(out_path)
     tokenizer.save_pretrained(out_path)
 
