@@ -1,12 +1,60 @@
 from awq import AutoAWQForCausalLM
 from awq.evaluation import eval_utils
+import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM, LlamaConfig
 import json
 import lm_eval
 from pathlib import Path
+import torch.nn.functional as F
+from datasets import load_dataset
+from tqdm import tqdm
 import argparse
 import subprocess
 import torch
+from torch import nn
+
+def evaluate_perplexity(model, tokenizer):
+    model = model.to("cuda")
+    assert model.device.type == "cuda"
+
+    def _perplexity(nlls, n_samples, seqlen):
+        return torch.exp(torch.stack(nlls).sum() / (n_samples * seqlen))
+
+    # load and prepare dataset
+    data = load_dataset("mit-han-lab/pile-val-backup", split="validation")
+    data = data.select(range(1000, 2000))
+    data = tokenizer(tokenizer.eos_token.join(data["text"]), return_tensors="pt")
+    data = data.input_ids.to(model.device)
+    print("Got data shape", data.shape)
+
+    seqlen = 2048
+    batch_size = 8
+    model = model.eval()
+    n_samples = data.numel() // (seqlen * batch_size)
+    data = data[0, :n_samples * seqlen * batch_size].view(n_samples, batch_size, seqlen)
+
+    nlls = []
+
+    with tqdm(range(n_samples), desc="Perplexity -") as progress_bar:
+        for i in progress_bar:
+            batch = data[i].to(model.device)
+            with torch.inference_mode():
+                logits = model(batch).logits
+            shift_logits = logits[:, :-1, :].contiguous().float()
+            shift_labels = batch[:, 1:].contiguous()
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(
+                shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+            )
+            neg_log_likelihood = loss.float() * seqlen
+            nlls.append(neg_log_likelihood)
+
+            curr_ppl = _perplexity(nlls, i + 1, seqlen)
+            progress_bar.set_description(f"Perplexity {curr_ppl:.3f}")
+
+    ppl = _perplexity(nlls, n_samples, seqlen)
+
+    return ppl.item()
 
 def maybe_convert_to_hf(model_path: Path, tokenizer: str) -> Path:
     assert model_path.exists(), f"Model path {model_path} does not exist"
@@ -39,12 +87,12 @@ def main(args):
     model_path = maybe_convert_to_hf(model_path, args.tokenizer)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     print("Got model")    
-    # Evaluating base model
-    print("Evaluating base model")
 
     if args.eval_base:
+        print("Loading base model")
         base_model = AutoModelForCausalLM.from_pretrained(model_path).to(device).to(torch.bfloat16)
-        ppl = eval_utils.evaluate_perplexity(base_model, tokenizer)
+        print("Evaluating base model")
+        ppl = evaluate_perplexity(base_model, tokenizer)
         res = {"wikitext": ppl}
         #res = lm_eval.simple_evaluate(model=base_model, tasks=args.tasks, device=device)
         write_result(args.out_file, model_path, base_model.config, res)
@@ -52,15 +100,26 @@ def main(args):
 
 
     quant_path = model_path / args.quantized_subdir
-    quant_config = { "zero_point": True, "q_group_size": args.group_size, "w_bit": 4, "version": "GEMM" }
 
     if not quant_path.exists():
         # Load model
         print("Quantizing")
         model = AutoAWQForCausalLM.from_pretrained(
-            model_path, "model.safetensors", fuse_layers=False, 
+            model_path, "model.safetensors", 
         )
+        acts_path = Path(model_path) / "acts.npy"
+        if acts_path.exists():
+            acts = torch.from_numpy(np.load(str(acts_path)))
+            model.split_mlp(acts, 0.99)
+
+        #print("Pre quant post split eval")
+        #evaluate_perplexity(model.model, tokenizer)
+        if model.config.intermediate_size % args.group_size != 0:
+            args.group_size //= 2
+            print(f"Group size is not a factor of hidden size. Using group size {args.group_size}")
+            assert model.config.hidden_size % args.group_size == 0
         # Quantize
+        quant_config = { "zero_point": True, "q_group_size": args.group_size, "w_bit": 4, "version": "GEMM" }
         model.quantize(tokenizer, quant_config=quant_config)
 
         print("Saving quantized model")
@@ -75,7 +134,7 @@ def main(args):
     print("Evaluating quantized model")
     # Evaluate
     model = model.to(device)
-    ppl = eval_utils.evaluate_perplexity(model, tokenizer)
+    ppl = evaluate_perplexity(model, tokenizer)
     res = {"wikitext": ppl}
     #res = lm_eval.simple_evaluate(model=model, tasks=args.tasks, out_file=args.out_file)
     write_result(args.out_file, quant_path, model.config, res)
