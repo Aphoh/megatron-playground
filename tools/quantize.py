@@ -38,15 +38,16 @@ def get_data_subset(split: str, tokenizer):
 def make_act_stats_hook(layer_idx, act_stats, act_fn):
     def hook(module, input, output):
         per_channel = output.reshape(-1, output.shape[-1])
-        act_stats["act_pcts"][layer_idx] += (per_channel > 0).sum(dim=0).to(torch.int32)
+        act_stats["act_pct0"][layer_idx] += (per_channel > 0).sum(dim=0).to(torch.int32)
         act_stats["act_magn"][layer_idx] += act_fn(per_channel).abs().sum(dim=0)
     return hook
 
 def get_act_stats(model: LlamaForCausalLM, tokenizer):
     cfg: LlamaConfig = model.config
+    n_layers, n_intermediate = cfg.num_hidden_layers, cfg.intermediate_size
     act_stats = {
-        "act_pcts": torch.zeros((cfg.num_hidden_layers, cfg.intermediate_size), dtype=torch.int32, device=model.device),
-        "act_magn": torch.zeros((cfg.num_hidden_layers, cfg.intermediate_size), dtype=torch.float32, device=model.device)
+        "act_pct0": torch.zeros((n_layers, n_intermediate), dtype=torch.int32, device=model.device),
+        "act_magn": torch.zeros((n_layers, n_intermediate), dtype=torch.float32, device=model.device),
     }
     hooks = []
     for i, layer in enumerate(model.model.layers):
@@ -58,6 +59,26 @@ def get_act_stats(model: LlamaForCausalLM, tokenizer):
         act_stats[k] = v.cpu().float() / n_tokens
     for hook in hooks:
         hook.remove()
+
+    # Measure vector magnitudes and vector magnitudes under the LM head
+    act_stats["vec_magn"] = torch.zeros((n_layers, n_intermediate), dtype=torch.float32, device=model.device)
+    act_stats["lmvec_magn"] = torch.zeros((n_layers, n_intermediate), dtype=torch.float32, device=model.device)
+    lm_head_weight = model.lm_head.weight
+    for i, layer in tqdm(enumerate(model.model.layers), desc="Measuring vector magnitudes"):
+        down_weight: torch.Tensor = layer.mlp.down_proj.weight.clone().detach()
+        act_stats["vec_magn"][i] = torch.linalg.vector_norm(down_weight, ord=2, dim=0)
+        down_weight_norm = model.model.norm(down_weight.T)
+        head_weighed = F.linear(down_weight_norm.T, lm_head_weight)
+        act_stats["lmvec_magn"][i] = torch.linalg.vector_norm(head_weighed, ord=2, dim=-1)
+
+    act_stats["act_vec_magn"] = act_stats["vec_magn"] * act_stats["act_magn"]
+    act_stats["act_lmvec_magn"] = act_stats["lmvec_magn"] * act_stats["act_magn"]
+
+    for key in ["act_vec_magn", "act_lmvec_magn"]:
+        maxv = act_stats[key].max()
+        minv = act_stats[key].min()
+        act_stats[key] = (act_stats[key] - minv) / (maxv - minv).cpu() # turn into 0-1 range
+
     return act_stats
 
 def eval_on_dataset(model, data, batch_size=8):
@@ -150,11 +171,11 @@ def main(args):
         if args.split_type is not None:
             split_cfg = SplitConfig(
                 random_cols = args.split_type == "rand",
-                top_gt0_cols = args.split_type == "top",
-                bottom_gt0_cols = args.split_type == "bottom",
+                top_cols = args.split_type == "top",
+                bottom_cols = args.split_type == "bottom",
                 n_split_constant = args.split_constant,
-                n_split_top_gt0_thresh = args.split_top,
-                n_split_bottom_gt0_thresh = args.split_bottom,
+                n_split_top_thresh = args.split_top,
+                n_split_bottom_thresh = args.split_bottom,
             )
             acts_path = Path(model_path) / "act_stats.pt"
             acts = None
@@ -165,7 +186,9 @@ def main(args):
                 print("Getting activation stats")
                 acts = get_act_stats(model.to("cuda"), tokenizer)
                 torch.save(acts, str(acts_path))
-            res["quant_counts"], res["non_q_counts"] = model.split_mlp(split_cfg, act_pcts=acts["act_pcts"], act_magn=acts["act_magn"])
+            split_metric = "act_" + args.split_metric
+            assert split_metric in acts, f"Split metric {split_metric} not found in {acts.keys()}"
+            res["quant_counts"], res["non_q_counts"] = model.split_mlp(split_cfg, split_metric=acts[split_metric])
 
         if model.config.intermediate_size % args.group_size != 0:
             args.group_size //= 2
@@ -202,6 +225,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-base", action="store_true", help="Evaluate base model")
 
     parser.add_argument("--split-type", type=str, choices=["rand", "top", "bottom"], default=None)
+    parser.add_argument("--split-metric", type=str, choices=["pct0", "magn", "vec_magn", "lmvec_magn"], default="pct0")
     parser.add_argument("--split-constant", type=int, default=None)
     parser.add_argument("--split-top", type=float, default=None)
     parser.add_argument("--split-bottom", type=float, default=None)
