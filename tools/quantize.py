@@ -32,24 +32,20 @@ def maybe_convert_to_hf(model_path: Path, tokenizer: str) -> Path:
 
 def get_split_config(args, act_stats):
     res = {}
-    if args.split_constant is not None:
-        res["n_split_constant"] = args.split_constant
-    elif args.split_top is not None:
-        res["n_split_top_thresh"] = args.split_top
-    elif args.split_bottom is not None:
-        res["n_split_bottom_thresh"] = args.split_bottom
+    if args.nquant_select == "constant":
+        res["n_split_constant"] = args.nquant_constant
     else:
         sorted_vals, _ = act_stats["act_" + args.split_metric].flatten().sort(descending=True)
-        if args.split_top_pct is not None:
-            res["n_split_top_thresh"] = sorted_vals[int(len(sorted_vals) * args.split_top_pct)]
-        elif args.split_bottom_pct is not None:
-            res["n_split_bottom_thresh"] = sorted_vals[-int(len(sorted_vals) * args.split_bottom_pct)]
+        if args.nquant_select == "top":
+            res["n_split_top_thresh"] = sorted_vals[int(len(sorted_vals) * args.nquant_pct)]
+        elif args.nquant_select == "bottom":
+            res["n_split_bottom_thresh"] = sorted_vals[-int(len(sorted_vals) * args.nquant_pct)]
         else:
             raise ValueError("No split threshold specified")
     return SplitConfig(
-        random_cols=args.split_type == "rand",
-        top_cols=args.split_type == "top",
-        bottom_cols=args.split_type == "bottom",
+        random_cols=args.channel_select == "rand",
+        top_cols=args.channel_select == "top",
+        bottom_cols=args.channel_select == "bottom",
         **res,
     )
 
@@ -113,7 +109,7 @@ def main(args):
         # Load model
         print("Quantizing")
         model = AutoAWQForCausalLM.from_pretrained(model_path, "model.safetensors")
-        if args.split_type is not None:
+        if args.split:
             acts_path = Path(model_path) / "act_stats.pt"
             acts = None
             with FileLock(acts_path.with_suffix(".lock")):
@@ -192,24 +188,35 @@ if __name__ == "__main__":
     )
     parser.add_argument("--eval-base", action="store_true", help="Evaluate base model")
 
-    parser.add_argument("--split-type", type=str, choices=["rand", "top", "bottom"], default=None, help="""
-        How to choose the columns to split. This is separate from how many columns to choose, and is useful for
-        doing ablations (ex: swapping in random columns for the top columns when splitting the top k%).
-    """)
+    parser.add_argument("--split", action="store_true")
     parser.add_argument(
         "--split-metric",
         type=str,
         choices=["pct0", "magn", "vec_magn", "lmvec_magn"],
         default="pct0",
     )
-    parser.add_argument("--split-constant", type=int, default=None, help="Skip quantizing a constant number of columns per layer")
-    parser.add_argument("--split-top", type=float, default=None, help="Skip quantizing the values of split-metric above this threshold")
-    parser.add_argument("--split-bottom", type=float, default=None, help="Skip quantizing the values of split-metric below this threshold")
-    parser.add_argument("--split-top-pct", type=float, default=None, help="Skip quantizing the top pct of values of split-metric")
-    parser.add_argument("--split-bottom-pct", type=float, default=None, help="Skip quantizing the bottom pct of values of split-metric")
+    parser.add_argument(
+        "--channel-select",
+        type=str,
+        choices=["top", "bottom", "rand"],
+        default="top",
+    )
+    parser.add_argument(
+        "--nquant-select",
+        type=str,
+        choices=["top", "bottom", "constant"],
+        default="top",
+        help="Select the top/bottom k% of values or a constant number of values to split on."
+    )
+    parser.add_argument(
+        "--nquant-pct", type=float, default=0.1, help="The percentage of values to split on."
+    )
+    parser.add_argument(
+        "--nquant-constant", type=int, default=128, help="The number of values to split on."
+    )
 
     args = parser.parse_args()
-    assert not args.quant_save and args.split_type, "Can't save split model yet"
+    assert not args.quant_save and args.split, "Can't save split model yet"
     
     wandb.init(project=args.wandb_project, config=vars(args))
 

@@ -87,6 +87,6 @@ def log_act_stats(stats):
             {
                 f"act_stats/{k}_cdf": wandb.plot.line(table, "value", "CDF", title=f"{k} CDF"),
                 f"act_stats/{k}": wandb.Histogram(v.cpu().numpy()),
-                f"act_stats/{k}_heatmap": wandb.Plotly(fig),
+                f"act_stats/{k}_heatmap": wandb.Image(fig),
             }
         )
