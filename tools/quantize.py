@@ -91,6 +91,10 @@ def main(args):
         base_model = AutoModelForCausalLM.from_pretrained(model_path).to(device).to(torch.bfloat16)
         print("Evaluating base model")
         res = get_valid_eval_dict(base_model, tokenizer)
+        res["non_q_counts"] = [
+            base_model.config.intermediate_size for i in range(base_model.config.num_hidden_layers)
+        ]
+        res["quant_counts"] = [0 for i in range(base_model.config.num_hidden_layers)]
         write_result(args, model_path, base_model.config, res)
         del base_model
 
@@ -108,7 +112,7 @@ def main(args):
     else:
         # Load model
         print("Quantizing")
-        model = AutoAWQForCausalLM.from_pretrained(model_path, "model.safetensors",)
+        model = AutoAWQForCausalLM.from_pretrained(model_path, "model.safetensors")
         if args.split_type is not None:
             acts_path = Path(model_path) / "act_stats.pt"
             acts = None

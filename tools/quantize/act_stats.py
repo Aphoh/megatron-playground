@@ -3,6 +3,7 @@ import torch
 from tqdm import tqdm
 from .eval import get_data_subset, eval_on_dataset
 import torch.nn.functional as F
+from matplotlib import pyplot as plt
 import wandb
 import numpy as np
 
@@ -65,18 +66,27 @@ def get_act_stats(model: LlamaForCausalLM, tokenizer):
 def log_act_stats(stats):
     assert wandb.run is not None, "wandb must be initialized"
     for k, v in stats.items():
-        vals = v.cpu().flatten().numpy()
+        vals = v.cpu().numpy()
+
+        fvals = vals.flatten()
 
         # Sort the data
-        sorted_data = np.sort(vals)
+        sorted_data = np.sort(fvals)
         # Compute the CDF values
-        cdf_values = np.arange(1, len(vals) + 1) / len(vals)
+        cdf_values = np.arange(1, len(fvals) + 1) / len(fvals)
         y_interp = np.linspace(0, 1, 100)
         x_interp = np.interp(y_interp, cdf_values, sorted_data)
         table = wandb.Table(data=list(zip(x_interp, y_interp)), columns=["value", "CDF"])
+
+        fig, ax = plt.subplots()
+
+        per_layer = np.sort(vals, axis=-1)
+        ax.imshow(per_layer, aspect="auto")
+        fig.tight_layout()
         wandb.log(
             {
                 f"act_stats/{k}_cdf": wandb.plot.line(table, "value", "CDF", title=f"{k} CDF"),
                 f"act_stats/{k}": wandb.Histogram(v.cpu().numpy()),
+                f"act_stats/{k}_heatmap": wandb.Plotly(fig),
             }
         )
