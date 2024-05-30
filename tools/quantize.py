@@ -39,7 +39,7 @@ def get_split_config(args, act_stats):
     elif args.split_bottom is not None:
         res["n_split_bottom_thresh"] = args.split_bottom
     else:
-        sorted_vals, _ = act_stats[args.split_metric].flatten().sort(descending=True)
+        sorted_vals, _ = act_stats["act_" + args.split_metric].flatten().sort(descending=True)
         if args.split_top_pct is not None:
             res["n_split_top_thresh"] = sorted_vals[int(len(sorted_vals) * args.split_top_pct)]
         elif args.split_bottom_pct is not None:
