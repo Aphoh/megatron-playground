@@ -17,7 +17,7 @@ cached_dataset = None
 def get_cached_dataset():
     global cached_dataset
     if cached_dataset is None:
-        cached_dataset = load_dataset("mli-will/slimpj-val", split="validation")
+        cached_dataset = load_dataset("mli-will/slimpj-val", split="validation").shuffle(seed=42)
         print("Loaded dataset with size", len(cached_dataset))
     return cached_dataset
 
