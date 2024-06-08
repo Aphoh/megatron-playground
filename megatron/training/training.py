@@ -714,8 +714,7 @@ def training_log(loss_dict, total_loss_dict, learning_rates, iteration,
     # Timer requires all the ranks to call.
     if args.log_timers_to_tensorboard and \
        (iteration % args.tensorboard_log_interval == 0):
-        timers.write(timers_to_log, writer, iteration,
-                     normalizer=total_iterations)
+        timers.write(timers_to_log, writer, iteration)
     if writer and (iteration % args.tensorboard_log_interval == 0):
         if wandb_writer:
             wandb_writer.log({'samples vs steps': args.consumed_train_samples},
@@ -805,51 +804,51 @@ def training_log(loss_dict, total_loss_dict, learning_rates, iteration,
             elapsed_time_per_iteration * 10**12 * args.world_size)
         if args.log_timers_to_tensorboard:
             if writer:
-                writer.add_scalar('iteration-time',
-                                  elapsed_time_per_iteration, iteration)
+                writer.add_scalar('iteration-time', elapsed_time_per_iteration, iteration)
             if wandb_writer:
-                wandb_writer.log({'iteration-time': elapsed_time_per_iteration},
-                                 iteration)
-        log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
-        log_string += ' iteration {:8d}/{:8d} |'.format(
-            iteration, args.train_iters)
-        log_string += ' consumed samples: {:12d} |'.format(
-            args.consumed_train_samples)
-        log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(
-            elapsed_time_per_iteration * 1000.0)
-        if args.log_throughput:
-            log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
-            if args.log_timers_to_tensorboard:
+                wandb_writer.log({'iteration-time': elapsed_time_per_iteration}, iteration)
+            if args.log_throughput:
                 if writer:
                     writer.add_scalar('throughput', throughput, iteration)
                 if wandb_writer:
                     wandb_writer.log({'throughput': throughput}, iteration)
-        lr_strings = ' '.join(['{:.3E}'.format(lr) for lr in learning_rates])
-        log_string += ' learning rates: {} |'.format(lr_strings)
-        log_string += ' global batch size: {:5d} |'.format(batch_size)
         for key in total_loss_dict:
             if key not in [advanced_iters_key, skipped_iters_key,
                            nan_iters_key]:
-                avg = total_loss_dict[key].item() / \
-                      float(max(1, total_loss_dict[advanced_iters_key]))
-                if avg > 0.0:
-                    log_string += ' {}: {:.6E} |'.format(key, avg)
+                #avg = total_loss_dict[key].item() / \
+                #      float(max(1, total_loss_dict[advanced_iters_key]))
+                #if avg > 0.0:
+                #    log_string += ' {}: {:.6E} |'.format(key, avg)
                 total_loss_dict[key] = torch.tensor([0.0], dtype=torch.float, device='cuda')
-        log_string += ' loss scale: {:.1f} |'.format(loss_scale)
-        if grad_norm is not None:
-            log_string += ' grad norm: {:.3f} |'.format(grad_norm)
-        if num_zeros_in_grad is not None:
-            log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
-        if params_norm is not None:
-            log_string += ' params norm: {:.3f} |'.format(params_norm)
-        log_string += ' number of skipped iterations: {:3d} |'.format(
-            total_loss_dict[skipped_iters_key])
-        log_string += ' number of nan iterations: {:3d} |'.format(
-            total_loss_dict[nan_iters_key])
+                pass
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
-        print_rank_last(log_string)
+        #log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
+        #log_string += ' iteration {:8d}/{:8d} |'.format(
+        #    iteration, args.train_iters)
+        #log_string += ' consumed samples: {:12d} |'.format(
+        #    args.consumed_train_samples)
+        #log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(
+        #    elapsed_time_per_iteration * 1000.0)
+        #if args.log_throughput:
+        #    log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
+        #lr_strings = ' '.join(['{:.3E}'.format(lr) for lr in learning_rates])
+        #log_string += ' learning rates: {} |'.format(lr_strings)
+        #log_string += ' global batch size: {:5d} |'.format(batch_size)
+        #log_string += ' loss scale: {:.1f} |'.format(loss_scale)
+        #if grad_norm is not None:
+        #    log_string += ' grad norm: {:.3f} |'.format(grad_norm)
+        #if num_zeros_in_grad is not None:
+        #    log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
+        #if params_norm is not None:
+        #    log_string += ' params norm: {:.3f} |'.format(params_norm)
+        #log_string += ' number of skipped iterations: {:3d} |'.format(
+        #    total_loss_dict[skipped_iters_key])
+        #log_string += ' number of nan iterations: {:3d} |'.format(
+        #    total_loss_dict[nan_iters_key])
+        #print_rank_last(log_string)
+        #timers.log(timers_to_log, normalizer=args.log_interval)
         if report_memory_flag and any(lr > 0 for lr in learning_rates):
             # Report memory after optimizer state has been initialized.
             if torch.distributed.get_rank() == 0:
@@ -857,7 +856,6 @@ def training_log(loss_dict, total_loss_dict, learning_rates, iteration,
                 report_theoretical_memory(args, num_microbatches=num_microbatches, verbose=True)
             report_memory('(after {} iterations)'.format(iteration))
             report_memory_flag = False
-        timers.log(timers_to_log, normalizer=args.log_interval)
 
     return report_memory_flag
 
