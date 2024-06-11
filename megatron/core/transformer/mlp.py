@@ -20,6 +20,7 @@ from megatron.core.tensor_parallel.random import (
     get_cuda_rng_tracker,
     get_data_parallel_rng_tracker_name,
 )
+from megatron.core.transformer import mlp_utils
 
 
 @dataclass
@@ -47,70 +48,53 @@ class GateLossScaler(torch.autograd.Function):
         GateLossScaler.loss_scale = scale
 
 
-@torch.compile
-def compute_eff_loss(logits: torch.Tensor, config: TransformerConfig):
-    return logits.sigmoid().square().mean()
-
-
-@torch.compile
-def group_entropy_loss(logits: torch.Tensor, config: TransformerConfig):
-    s, b, _ = logits.shape
-    logits = logits.view(s, b, -1, config.dsparse_block_width)
-    entropy_loss = torch.log_softmax(logits, dim=-1).mul(torch.softmax(logits, dim=-1)).sum()
-    return entropy_loss
-
-
-GATE_LOSSES = {"eff": compute_eff_loss, "group_entropy": group_entropy_loss}
-
 
 class MLPActivation(MegatronModule):
     def __init__(self, config: TransformerConfig):
         super().__init__(config=config)
+        if self.config.add_bias_linear:
+            self.fused_fn = mact.get_fused_bias_act(config.activation_func, config.gated_linear_unit)
+        else:
+            self.fused_fn = mact.get_fused_act(config.activation_func, config.gated_linear_unit)
+        assert self.fused_fn is not None, f"Could not find function for activation {config.activation_func}, glu: {config.gated_linear_unit}"
+        self.layer_number = None
 
     def apply_gate_loss(self, intermediate_parallel: torch.Tensor) -> torch.Tensor:
-        loss = torch.tensor(0.0, device=intermediate_parallel.device)
+        x0 = intermediate_parallel
+        if self.config.gated_linear_unit:
+            x0 = intermediate_parallel.chunk(2, dim=-1)[0]
+        loss = torch.tensor(0.0, device=x0.device)
         for loss_type, coeff in zip(self.config.gate_aux_losses, self.config.gate_aux_loss_coeffs):
-            loss += coeff * GATE_LOSSES[loss_type](intermediate_parallel, self.config)
+            loss += coeff * mlp_utils.GATE_LOSSES[loss_type](x0, self.config)
         return GateLossScaler.apply(intermediate_parallel, loss)
+
+    def set_layer_number(self, layer_number):
+        self.layer_number = layer_number
 
     def forward(
         self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor
     ) -> torch.Tensor:
-        should_apply_eff_loss = self.training and len(self.config.gate_aux_losses) > 0
+        should_apply_gate_loss = self.training and len(self.config.gate_aux_losses) > 0
+        should_log_gate_stats = not self.training and self.config.mlp_log_gate_stats
         kwargs = {"a": self.config.swash_alpha} if self.config.activation_func == mact.swash else {}
         if self.config.bias_activation_fusion:
-            fused_fn = mact.get_fused_bias_act(
-                self.config.activation_func, self.config.gated_linear_unit
-            )
-            assert fused_fn is not None, "Could not find fused function for bias activation fusion"
+            assert self.fused_fn is not None, "Could not find fused function for bias activation fusion"
             assert self.config.add_bias_linear, "Bias fusion requires add_bias_linear"
-            assert not should_apply_eff_loss, "Eff loss not supported with bias fusion"
+            assert not should_apply_gate_loss, "Gate loss not supported with bias fusion"
+            assert not should_log_gate_stats, "Gate act stats not supported with bias fusion"
             assert bias_parallel is not None, "Bias fusion requires bias"
-            intermediate_parallel = fused_fn(intermediate_parallel, bias_parallel, **kwargs)
-        elif should_apply_eff_loss:
-            if bias_parallel is not None:
-                intermediate_parallel = intermediate_parallel + bias_parallel
-            if self.config.gated_linear_unit:
-
-                def glu(x):
-                    x = torch.chunk(x, 2, dim=-1)
-                    x0 = self.apply_gate_loss(x[0])
-                    return self.config.activation_func(x0, **kwargs) * x[1]
-
-                intermediate_parallel = glu(intermediate_parallel)
-            else:
-                intermediate_parallel = self.apply_gate_loss(intermediate_parallel)
-                intermediate_parallel = self.config.activation_func(intermediate_parallel, **kwargs)
+            return self.fused_fn(intermediate_parallel, bias_parallel, **kwargs)
         else:
-            fused_fn = mact.get_fused_act(
-                self.config.activation_func, self.config.gated_linear_unit
-            )
-            assert fused_fn is not None, "Could not find function for activation"
-            if bias_parallel is not None:
+            if self.config.add_bias_linear and bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
-            intermediate_parallel = fused_fn(intermediate_parallel, **kwargs)
-
-        return intermediate_parallel
+            if should_apply_gate_loss:
+                intermediate_parallel = self.apply_gate_loss(intermediate_parallel)
+            if should_log_gate_stats:
+                x0 = intermediate_parallel
+                if self.config.gated_linear_unit:
+                    x0 = intermediate_parallel.chunk(2, dim=-1)[0]
+                mlp_utils.save_hist_metric_to_tracker("gate_hist", x0, self.layer_number, self.config.num_layers)
+            return self.fused_fn(intermediate_parallel, **kwargs)
 
 
 class MLP(MegatronModule):
@@ -142,6 +126,7 @@ class MLP(MegatronModule):
         self.config: TransformerConfig = config
 
         self.input_size = input_size if input_size is not None else self.config.hidden_size
+        self.layer_number = None
 
         # If this is a gated linear unit we double the output width, see https://arxiv.org/pdf/2002.05202.pdf
         ffn_hidden_size = self.config.ffn_hidden_size
@@ -186,6 +171,10 @@ class MLP(MegatronModule):
         output, output_bias = self.linear_fc2(intermediate_parallel)
 
         return output, output_bias
+
+    def set_layer_number(self, layer_number):
+        self.layer_number = layer_number
+        self.activation_func.set_layer_number(layer_number)
 
     def sharded_state_dict(
         self, prefix: str = '', sharded_offsets: tuple = (), metadata: Optional[dict] = None
@@ -306,24 +295,29 @@ class MLPDShard(MLP):
     def forward(self, hidden_states):
         # [s, b, 4 * h/p]
         intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
-        gate_out = None
+        if self.config.add_bias_linear:
+            assert not self.config.bias_activation_fusion, "Bias fusion not supported with dsparse"
+            intermediate_parallel += bias_parallel
+            bias_parallel = None
+
+        gate_out = intermediate_parallel
         if self.config.gated_linear_unit:
-            gate_out = intermediate_parallel.chunk(2, dim=-1)[1]
-            if self.config.add_bias_linear:
-                gate_out += bias_parallel.chunk(2, dim=-1)[1]
+            gate_out = intermediate_parallel.chunk(2, dim=-1)[0]
 
         router_logits = torch.nn.functional.linear(hidden_states, self.router_weight).view(
             -1, self.num_exps
         )
-        router_labels = intermediate_parallel.view(-1, self.block_width)
+        router_labels = gate_out.view(-1, self.block_width)
         router_labels = torch.any(router_labels > 0, dim=-1)
         router_preds = router_logits > 0
 
         true_pos = (router_preds & router_labels).sum()
         false_pos = (router_preds & ~router_labels).sum()
         false_neg = (~router_preds & router_labels).sum()
-        self.accumulate_loggable("precision", num=true_pos, denom=true_pos + false_pos)
-        self.accumulate_loggable("recall", num=true_pos, denom=true_pos + false_neg)
+        correct = (router_preds == router_labels).sum()
+        mlp_utils.save_nd_metric_to_tracker("router_precision", true_pos, true_pos + false_pos, self.layer_number, self.config.num_layers)
+        mlp_utils.save_nd_metric_to_tracker("router_recall", true_pos, true_pos + false_neg, self.layer_number, self.config.num_layers)
+        mlp_utils.save_nd_metric_to_tracker("router_accuracy", correct, router_labels.numel(), self.layer_number, self.config.num_layers)
 
         router_loss = (
             self.config.dsparse_router_loss_coeff

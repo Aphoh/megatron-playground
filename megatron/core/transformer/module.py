@@ -97,27 +97,6 @@ class MegatronModule(torch.nn.Module):
             if hasattr(m, "is_first_microbatch"):
                 m.is_first_microbatch = True
 
-    def accumulate_loggable(self, key: str, num: float, denom: float = 1, reduce_op="mean"):
-        """Put a value in the aggregatable dictionary.
-
-        Args:
-            key (str): Key to store the value.
-            value (Any): Value to store.
-        """
-        for m in [num, denom]:
-            assert isinstance(m, torch.Tensor)
-        if not hasattr(self, '_aggregatable'):
-            self._loggable = {}
-        if reduce_op == "mean":
-            if key not in self._loggable:
-                self._loggable[key] = (num, denom)
-            else:
-                agg = self._loggable[key]
-                agg[0] += num
-                agg[1] += denom
-        else:
-            raise NotImplementedError(f"Reduce operation {reduce_op} not implemented.")
-        self._loggable[key] = agg
 
 
 def conversion_helper(val, conversion):

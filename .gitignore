@@ -9,3 +9,6 @@ logs
 .vscode
 venv
 wandb
+results
+scratch
+sweeps

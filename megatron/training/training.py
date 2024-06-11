@@ -38,6 +38,7 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.mlp import MLPActivation
+from megatron.core.transformer.mlp_utils import track_mlp_metrics
 from megatron.sparsity_utils import activation_logging_hook
 
 from .utils import (
@@ -796,6 +797,8 @@ def training_log(loss_dict, total_loss_dict, learning_rates, iteration,
         moe_loss_scale = 1 / get_num_microbatches()
         track_moe_metrics(moe_loss_scale, iteration, writer, wandb_writer, total_loss_dict, args.moe_per_layer_logging)
 
+    track_mlp_metrics(iteration, writer, wandb_writer)
+
     if iteration % args.log_interval == 0:
         elapsed_time = timers('interval-time').elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
@@ -1183,21 +1186,8 @@ def evaluate(forward_step_func,
         compute_feature_bank(model)
 
     # Turn on evaluation mode which disables dropout.
-    extra_log_dict = {}
-    module_fwd_hooks = []
     for model_module in model:
         model_module.eval()
-        unwrapped = unwrap_model(model_module)
-        if args.log_activation_sparsity:
-            assert args.use_mcore_models, "Activation sparsity logging requires mcore models"
-            for idx, layer in enumerate(unwrapped.decoder.layers):
-                mlp_act : MLPActivation = layer.mlp.activation_func
-                assert isinstance(mlp_act, MLPActivation), "Only MLPActivation is supported for activation sparsity logging"
-                module_fwd_hooks.append(
-                    mlp_act.register_forward_pre_hook(
-                        activation_logging_hook(layer_idx=idx+1, config=config, output_dict=extra_log_dict)
-                    )
-                )
 
     total_loss_dict = {}
 
@@ -1267,20 +1257,9 @@ def evaluate(forward_step_func,
                 forward_only=True,
                 collect_non_loss_data=True)
 
-    for hook in module_fwd_hooks:
-        hook.remove()
-
     # Move model back to the train mode.
     for model_module in model:
         model_module.train()
-
-    for key in extra_log_dict:
-        if key == "bins":
-            continue
-        # TODO: do I need a group here?
-        torch.distributed.all_reduce(extra_log_dict[key], op=torch.distributed.ReduceOp.SUM)
-        # Need to leave the hist as ints for wandb
-        #extra_log_dict[key] /= args.eval_iters * eval_num_microbatches
 
     for key in total_loss_dict:
         total_loss_dict[key] /= args.eval_iters * eval_num_microbatches
@@ -1288,7 +1267,7 @@ def evaluate(forward_step_func,
     timers('evaluate').stop()
     timers.log(['evaluate'])
 
-    return total_loss_dict, extra_log_dict, collected_non_loss_data, False
+    return total_loss_dict, collected_non_loss_data, False
 
 def evaluate_and_print_results(prefix, forward_step_func,
                                data_iterator, model,
@@ -1303,7 +1282,7 @@ def evaluate_and_print_results(prefix, forward_step_func,
 
     wandb_writer = get_wandb_writer()
 
-    total_loss_dict, extra_log_dict, collected_non_loss_data, timelimit = evaluate(
+    total_loss_dict, collected_non_loss_data, timelimit = evaluate(
         forward_step_func, data_iterator, model,
         process_non_loss_data_func, config, verbose)
     # Timelimit hit during evaluation
@@ -1332,30 +1311,7 @@ def evaluate_and_print_results(prefix, forward_step_func,
                     '{} {}'.format(key, loss_type): total_loss_dict[key].item()},
                     iteration)
 
-    if extra_log_dict and 'bins' in extra_log_dict:
-        bins = extra_log_dict.pop('bins')
-        if writer:
-            gt0s = []
-            for key, hist in extra_log_dict.items():
-                gt0_idx = torch.argwhere(bins == 0.0)
-                assert gt0_idx.numel() == 1, f"Bins must contain only one zero element, got {bins}"
-                gt0_idx = gt0_idx.squeeze().item()
-                assert bins[gt0_idx].item() == 0
-                gt0 = (hist[gt0_idx:].sum() / hist.sum()).item()
-                gt0s.append(gt0)
-                writer.add_scalar(f'{loss_type} {key} gt0', gt0, iteration)
-                if wandb_writer and is_last_rank():
-                    import wandb
-                    wandb_writer.log(
-                        {
-                            key: wandb.Histogram(np_histogram=(hist.cpu().numpy(), bins.cpu().numpy())),
-                            f'{key} gt0': gt0
-                        }, iteration
-                    )
-            total_gt0 = torch.mean(torch.tensor(gt0s)) # these should all have equal # of params, works for now
-            writer.add_scalar('total gt0', total_gt0, iteration)
-            if wandb_writer and is_last_rank():
-                wandb_writer.log({'total gt0': total_gt0}, iteration)
+    track_mlp_metrics(iteration, writer, wandb_writer)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
         process_non_loss_data_func(collected_non_loss_data, iteration, writer)

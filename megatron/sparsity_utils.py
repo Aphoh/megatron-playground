@@ -2,7 +2,6 @@ from megatron.core.transformer import TransformerConfig
 import torch
 from torchist import histogram
 
-
 def activation_logging_hook(
     layer_idx: int, config: TransformerConfig, output_dict: dict, n_bins=500, lim=5.0
 ):

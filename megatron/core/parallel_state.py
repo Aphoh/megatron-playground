@@ -80,6 +80,8 @@ _GLOBAL_MEMORY_BUFFER = None
 # MOE logging
 _MOE_AUX_LOSSES_LOGGING_TRACKER = {}
 
+# MLP logging
+_MLP_LOGGING_TRACKER = {}
 
 def get_nccl_options(pg_name, nccl_comm_cfgs):
     """Set the NCCL process group options.

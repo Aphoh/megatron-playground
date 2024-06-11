@@ -8,6 +8,7 @@ import megatron.core.activations as mact
 import torch
 import torch.nn.functional as F
 
+from .mlp_utils import GATE_LOSSES
 from ..model_parallel_config import ModelParallelConfig
 from ..utils import init_method_normal, scaled_init_method_normal
 
@@ -262,10 +263,13 @@ class TransformerConfig(ModelParallelConfig):
     """Method that initializes the router weights. Defaults to init_method."""
     dsparse_router_loss_coeff: float = 0.01
     """Scaling coefficient for the router loss. Defaults to 0.01."""
-    gate_aux_losses: List[str] = []
+    gate_aux_losses: List[str] = None
     """Apply auxiliar losses to the gate. Defaults to an empty list. Options are 'eff', 'group_entropy' """
-    gate_aux_loss_coeffs: List[float] = []
+    gate_aux_loss_coeffs: List[float] = None
     """Loss coefficients for the gate auxiliar losses. Defaults to an empty list. """
+    mlp_log_gate_stats: bool = False
+    """Whether to log gate statistics for the MLP layer."""
+
     # These 2 attributes are WAR for TRTLLM export. DO NOT USE!! WILL BE DEPRECATED SOON!!
     max_position_embeddings: int = 0
     """Deprecated. Do not use."""
@@ -405,9 +409,17 @@ class TransformerConfig(ModelParallelConfig):
         if self.dsparse_block_width and self.dsparse_router_init_method is None:
             self.dsparse_router_init_method = self.init_method
 
+        if self.gate_aux_losses is None:
+            self.gate_aux_losses = []
+        if self.gate_aux_loss_coeffs is None:
+            self.gate_aux_loss_coeffs = []
+
         if len(self.gate_aux_losses) != len(self.gate_aux_loss_coeffs):
             raise ValueError(
                 f'gate_aux_losses: {self.gate_aux_losses} and gate_aux_loss_coeffs: {self.gate_aux_loss_coeffs} must have the same length.'
             )
+
+        for key in self.gate_aux_losses:
+            assert key in GATE_LOSSES, f"Gate loss {key} not recognized. Available losses are {GATE_LOSSES.keys()}."
         if "group_entropy" in self.gate_aux_losses:
             assert self.dsparse_block_width is not None
