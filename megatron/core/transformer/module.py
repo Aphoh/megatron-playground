@@ -32,12 +32,14 @@ class MegatronModule(torch.nn.Module):
 
     Args:
         config (TransformerConfig): Transformer config
+        short_name (str, optional): Short name for the module to use when logging. Defaults to None.
     """
 
     # def __init__(self, config: TransformerConfig, share_word_embeddings=True):
-    def __init__(self, config: TransformerConfig):
+    def __init__(self, config: TransformerConfig, short_name: str = None):
         super().__init__()
         self.config = config
+        self.short_name = short_name
 
     def state_dict_for_save_checkpoint(self, prefix: str = '', keep_vars: bool = False):
         """Override state dict for saving checkpoints Use this function to override the
@@ -94,6 +96,28 @@ class MegatronModule(torch.nn.Module):
         for m in self.modules():
             if hasattr(m, "is_first_microbatch"):
                 m.is_first_microbatch = True
+
+    def accumulate_loggable(self, key: str, num: float, denom: float = 1, reduce_op="mean"):
+        """Put a value in the aggregatable dictionary.
+
+        Args:
+            key (str): Key to store the value.
+            value (Any): Value to store.
+        """
+        for m in [num, denom]:
+            assert isinstance(m, torch.Tensor)
+        if not hasattr(self, '_aggregatable'):
+            self._loggable = {}
+        if reduce_op == "mean":
+            if key not in self._loggable:
+                self._loggable[key] = (num, denom)
+            else:
+                agg = self._loggable[key]
+                agg[0] += num
+                agg[1] += denom
+        else:
+            raise NotImplementedError(f"Reduce operation {reduce_op} not implemented.")
+        self._loggable[key] = agg
 
 
 def conversion_helper(val, conversion):

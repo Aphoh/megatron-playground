@@ -16,6 +16,10 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 import megatron.core.activations as mact
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.tensor_parallel.random import (
+    get_cuda_rng_tracker,
+    get_data_parallel_rng_tracker_name,
+)
 
 
 @dataclass
@@ -23,7 +27,8 @@ class MLPSubmodules:
     linear_fc1: Union[ModuleSpec, type] = None
     linear_fc2: Union[ModuleSpec, type] = None
 
-class EffLossScaler(torch.autograd.Function):
+
+class GateLossScaler(torch.autograd.Function):
     loss_scale: torch.Tensor = torch.tensor(1.0)
 
     @staticmethod
@@ -34,30 +39,49 @@ class EffLossScaler(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
         (loss,) = ctx.saved_tensors
-        scaled_loss_grad = torch.ones_like(loss) * EffLossScaler.loss_scale
+        scaled_loss_grad = torch.ones_like(loss) * GateLossScaler.loss_scale
         return grad_output, scaled_loss_grad
 
     @staticmethod
     def set_loss_scale(scale: torch.Tensor):
-        EffLossScaler.loss_scale = scale
+        GateLossScaler.loss_scale = scale
+
 
 @torch.compile
-def compute_eff_loss(logits: torch.Tensor):
+def compute_eff_loss(logits: torch.Tensor, config: TransformerConfig):
     return logits.sigmoid().square().mean()
+
+
+@torch.compile
+def group_entropy_loss(logits: torch.Tensor, config: TransformerConfig):
+    s, b, _ = logits.shape
+    logits = logits.view(s, b, -1, config.dsparse_block_width)
+    entropy_loss = torch.log_softmax(logits, dim=-1).mul(torch.softmax(logits, dim=-1)).sum()
+    return entropy_loss
+
+
+GATE_LOSSES = {"eff": compute_eff_loss, "group_entropy": group_entropy_loss}
+
 
 class MLPActivation(MegatronModule):
     def __init__(self, config: TransformerConfig):
         super().__init__(config=config)
 
-    def apply_eff_loss(self, intermediate_parallel: torch.Tensor) -> torch.Tensor:
-        eff_loss = self.config.mlp_eff_loss * compute_eff_loss(intermediate_parallel)
-        return EffLossScaler.apply(intermediate_parallel, eff_loss)
+    def apply_gate_loss(self, intermediate_parallel: torch.Tensor) -> torch.Tensor:
+        loss = torch.tensor(0.0, device=intermediate_parallel.device)
+        for loss_type, coeff in zip(self.config.gate_aux_losses, self.config.gate_aux_loss_coeffs):
+            loss += coeff * GATE_LOSSES[loss_type](intermediate_parallel, self.config)
+        return GateLossScaler.apply(intermediate_parallel, loss)
 
-    def forward(self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor):
-        should_apply_eff_loss = self.training and self.config.mlp_eff_loss
+    def forward(
+        self, intermediate_parallel: torch.Tensor, bias_parallel: torch.Tensor
+    ) -> torch.Tensor:
+        should_apply_eff_loss = self.training and len(self.config.gate_aux_losses) > 0
         kwargs = {"a": self.config.swash_alpha} if self.config.activation_func == mact.swash else {}
         if self.config.bias_activation_fusion:
-            fused_fn = mact.get_fused_bias_act(self.config.activation_func, self.config.gated_linear_unit)
+            fused_fn = mact.get_fused_bias_act(
+                self.config.activation_func, self.config.gated_linear_unit
+            )
             assert fused_fn is not None, "Could not find fused function for bias activation fusion"
             assert self.config.add_bias_linear, "Bias fusion requires add_bias_linear"
             assert not should_apply_eff_loss, "Eff loss not supported with bias fusion"
@@ -67,17 +91,20 @@ class MLPActivation(MegatronModule):
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
             if self.config.gated_linear_unit:
+
                 def glu(x):
                     x = torch.chunk(x, 2, dim=-1)
-                    x0 = self.apply_eff_loss(x[0])
+                    x0 = self.apply_gate_loss(x[0])
                     return self.config.activation_func(x0, **kwargs) * x[1]
 
                 intermediate_parallel = glu(intermediate_parallel)
             else:
-                intermediate_parallel = self.apply_eff_loss(intermediate_parallel)
+                intermediate_parallel = self.apply_gate_loss(intermediate_parallel)
                 intermediate_parallel = self.config.activation_func(intermediate_parallel, **kwargs)
         else:
-            fused_fn = mact.get_fused_act(self.config.activation_func, self.config.gated_linear_unit)
+            fused_fn = mact.get_fused_act(
+                self.config.activation_func, self.config.gated_linear_unit
+            )
             assert fused_fn is not None, "Could not find function for activation"
             if bias_parallel is not None:
                 intermediate_parallel = intermediate_parallel + bias_parallel
@@ -236,77 +263,76 @@ class MLP(MegatronModule):
         return sharded_state_dict
 
 
-@dataclass
-class MLPDShardSubmodules(MLPSubmodules):
-    linear_fc1_shard_mask: Union[ModuleSpec, type] = None
+class RouterLossScaler(torch.autograd.Function):
+    loss_scale: torch.Tensor = torch.tensor(1.0)
+
+    @staticmethod
+    def forward(ctx, output: torch.Tensor, loss: torch.Tensor):
+        ctx.save_for_backward(loss)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (loss,) = ctx.saved_tensors
+        scaled_loss_grad = torch.ones_like(loss) * RouterLossScaler.loss_scale
+        return grad_output, scaled_loss_grad
+
+    @staticmethod
+    def set_loss_scale(scale: torch.Tensor):
+        RouterLossScaler.loss_scale = scale
 
 
 class MLPDShard(MLP):
     def __init__(
-        self, config: TransformerConfig, submodules: MLPDShardSubmodules, is_expert: bool = False
+        self, config: TransformerConfig, submodules: MLPSubmodules, is_expert: bool = False
     ):
-        if is_expert:
-            raise ValueError("MLPDShard should only be used for non-expert models")
         if config.gated_linear_unit:
             raise ValueError("MLPDShard does not support gated linear units")
 
         super().__init__(config, submodules, is_expert=is_expert)
 
-        self.linear_fc1_shard_mask = build_module(
-            submodules.linear_fc1_shard_mask,
-            self.config.hidden_size,
-            self.config.dsparse_nblocks,
-            config=self.config,
-            init_method=self.config.dsparse_router_init_method,
-            gather_output=False,
-            bias=config.dsparse_bias,
-            tp_comm_buffer_name='fc1_shard_mask',
-            skip_bias_add=False,
-            is_expert=False,
+        self.num_exps = self.config.ffn_hidden_size // self.config.dsparse_block_width
+        self.block_width = self.config.dsparse_block_width
+        assert self.block_width * self.num_exps == self.config.ffn_hidden_size
+        self.router_weight = torch.nn.Parameter(
+            torch.empty((self.num_exps, self.config.hidden_size))
         )
+        with get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name()):
+            self.config.dsparse_router_init_method(self.router_weight)
+
         if parallel_state.get_tensor_model_parallel_world_size() > 1:
             raise ValueError("MLPDShard does not support tensor parallelism")
 
-        self.experts_per_token = self.config.dsparse_nblocks // self.config.dsparse_factor
-        self.temperature = 1
-        self.expert_width = self.config.ffn_hidden_size // self.config.dsparse_nblocks
-        self.normalize_mask = self.config.dsparse_normalize_mask
-        print(
-            f"MLPDShard: experts_per_token={self.experts_per_token}, expert_width={self.expert_width}, dsparse_nblocks={self.config.dsparse_nblocks}"
-        )
-
-        if self.config.dsparse_bias_init_1:
-            torch.nn.init.constant_(self.linear_fc1_shard_mask.bias, 1.0)
-
     def forward(self, hidden_states):
-
         # [s, b, 4 * h/p]
         intermediate_parallel, bias_parallel = self.linear_fc1(hidden_states)
+        gate_out = None
+        if self.config.gated_linear_unit:
+            gate_out = intermediate_parallel.chunk(2, dim=-1)[1]
+            if self.config.add_bias_linear:
+                gate_out += bias_parallel.chunk(2, dim=-1)[1]
 
-        intermediate_parallel = self.compute_activation(intermediate_parallel, bias_parallel)
+        router_logits = torch.nn.functional.linear(hidden_states, self.router_weight).view(
+            -1, self.num_exps
+        )
+        router_labels = intermediate_parallel.view(-1, self.block_width)
+        router_labels = torch.any(router_labels > 0, dim=-1)
+        router_preds = router_logits > 0
 
-        # mask is [s, b, nblocks]
-        mask_logits, _ = self.linear_fc1_shard_mask(hidden_states)
-        s, b, nblocks = mask_logits.shape
-        mask_logits = mask_logits.view(s * b, nblocks)  # [s*b, nblocks]
+        true_pos = (router_preds & router_labels).sum()
+        false_pos = (router_preds & ~router_labels).sum()
+        false_neg = (~router_preds & router_labels).sum()
+        self.accumulate_loggable("precision", num=true_pos, denom=true_pos + false_pos)
+        self.accumulate_loggable("recall", num=true_pos, denom=true_pos + false_neg)
 
-        sm_mask = torch.softmax(mask_logits / self.temperature, dim=1)  # softmax over experts
-        # TODO: we do this so that we approximate the normal model, but should I
-        # slowly temperature this out?
-        if self.normalize_mask:  # TODO should I try this after topk?
-            sm_mask = sm_mask / sm_mask.mean(dim=0)
+        router_loss = (
+            self.config.dsparse_router_loss_coeff
+            * torch.nn.functional.binary_cross_entropy_with_logits(router_logits, router_labels)
+        )
 
-        vals, ind = sm_mask.topk(self.experts_per_token, dim=1)  # take top k per token
-        mask = torch.zeros_like(mask_logits)
-        mask.scatter_(1, ind, vals)
-        mask = mask.repeat_interleave(self.expert_width, dim=1)  # [s*b, dff]
-        #tp_size = intermediate_parallel.shape[-1]
-        #rank = parallel_state.get_tensor_model_parallel_rank()
+        intermediate_parallel = RouterLossScaler.apply(intermediate_parallel, router_loss)
 
-        #intermediate_parallel *= mask.view(intermediate_parallel.shape)[
-        #    ..., tp_size * rank : tp_size * (rank + 1)
-        #]
-        intermediate_parallel *= mask.view(intermediate_parallel.shape)
+        intermediate_parallel = self.activation_func(intermediate_parallel, bias_parallel)
 
         # [s, b, h]
         output, output_bias = self.linear_fc2(intermediate_parallel)

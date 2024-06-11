@@ -173,7 +173,11 @@ class TransformerBlock(MegatronModule):
             # Final layer norm before output.
             # We don't check transformer-impl because in checkpoint conversion we need
             # something that supports RMSNorm too.
-            ln_cls = TENorm if not self.config.normalization == "NonParametricLayerNorm" else NonParametricLayerNorm
+            ln_cls = (
+                TENorm
+                if not self.config.normalization == "NonParametricLayerNorm"
+                else NonParametricLayerNorm
+            )
             self.final_layernorm = ln_cls(
                 config=self.config,
                 hidden_size=self.config.hidden_size,

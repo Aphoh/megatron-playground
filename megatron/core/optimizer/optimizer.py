@@ -689,9 +689,12 @@ class FP32Optimizer(MegatronOptimizer):
 
     def load_state_dict(self, state_dict):
         self.optimizer.load_state_dict(state_dict)
-    
-    def sharded_state_dict(self, _model_sharded_state_dict: ShardedStateDict, _is_loading: bool = False, **kwargs) -> ShardedStateDict:
+
+    def sharded_state_dict(
+        self, _model_sharded_state_dict: ShardedStateDict, _is_loading: bool = False, **kwargs
+    ) -> ShardedStateDict:
         raise ValueError("FP32Optimizer does not support sharded state dict.")
+
 
 class ChainedOptimizer(MegatronOptimizer):
     """ChainedOptimizer is designed for a collection of optimizers.

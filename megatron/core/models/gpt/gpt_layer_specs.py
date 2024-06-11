@@ -24,10 +24,16 @@ from megatron.core.transformer.transformer_layer import TransformerLayer, Transf
 
 # Use this spec to use lower level Transformer Engine modules (required for fp8 training)
 def get_gpt_layer_with_transformer_engine_spec(
-    num_experts: int = None, moe_grouped_gemm: bool = False, qk_layernorm: bool = False, nonparametric_layernorm: bool = False,
+    num_experts: int = None,
+    moe_grouped_gemm: bool = False,
+    qk_layernorm: bool = False,
+    nonparametric_layernorm: bool = False,
 ) -> ModuleSpec:
     mlp = _get_mlp_module_spec(
-        use_te=True, num_experts=num_experts, moe_grouped_gemm=moe_grouped_gemm, layernorm_in_linear=not nonparametric_layernorm 
+        use_te=True,
+        num_experts=num_experts,
+        moe_grouped_gemm=moe_grouped_gemm,
+        layernorm_in_linear=not nonparametric_layernorm,
     )
     pre_mlp_layernorm = IdentityOp
     if num_experts:
@@ -42,7 +48,9 @@ def get_gpt_layer_with_transformer_engine_spec(
                 module=SelfAttention,
                 params={"attn_mask_type": AttnMaskType.causal},
                 submodules=SelfAttentionSubmodules(
-                    linear_qkv=TELayerNormColumnParallelLinear if not nonparametric_layernorm else TEColumnParallelLinear,
+                    linear_qkv=TELayerNormColumnParallelLinear
+                    if not nonparametric_layernorm
+                    else TEColumnParallelLinear,
                     core_attention=TEDotProductAttention,
                     linear_proj=TERowParallelLinear,
                     q_layernorm=TENorm if qk_layernorm else IdentityOp,
@@ -59,15 +67,23 @@ def get_gpt_layer_with_transformer_engine_spec(
 
 # Use this spec for an implementation using only modules in megatron core
 def get_gpt_layer_local_spec(
-    num_experts: int = None, moe_grouped_gemm: bool = False, qk_layernorm: bool = False, nonparametric_layernorm: bool = False,
+    num_experts: int = None,
+    moe_grouped_gemm: bool = False,
+    qk_layernorm: bool = False,
+    nonparametric_layernorm: bool = False,
 ) -> ModuleSpec:
     mlp = _get_mlp_module_spec(
-        use_te=False, num_experts=num_experts, moe_grouped_gemm=moe_grouped_gemm, layernorm_in_linear=False,
+        use_te=False,
+        num_experts=num_experts,
+        moe_grouped_gemm=moe_grouped_gemm,
+        layernorm_in_linear=False,
     )
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
-            input_layernorm=FusedLayerNorm if not nonparametric_layernorm else NonParametricLayerNorm,
+            input_layernorm=FusedLayerNorm
+            if not nonparametric_layernorm
+            else NonParametricLayerNorm,
             self_attention=ModuleSpec(
                 module=SelfAttention,
                 params={"attn_mask_type": AttnMaskType.causal},
@@ -80,7 +96,9 @@ def get_gpt_layer_local_spec(
                 ),
             ),
             self_attn_bda=get_bias_dropout_add,
-            pre_mlp_layernorm=FusedLayerNorm if not nonparametric_layernorm else NonParametricLayerNorm,
+            pre_mlp_layernorm=FusedLayerNorm
+            if not nonparametric_layernorm
+            else NonParametricLayerNorm,
             mlp=mlp,
             mlp_bda=get_bias_dropout_add,
             sharded_state_dict_keys_map={
@@ -93,11 +111,17 @@ def get_gpt_layer_local_spec(
 
 # Helper function to get module spec for MLP/MoE
 def _get_mlp_module_spec(
-    use_te: bool = True, num_experts: int = None, moe_grouped_gemm: bool = False, layernorm_in_linear: bool = True
+    use_te: bool = True,
+    num_experts: int = None,
+    moe_grouped_gemm: bool = False,
+    layernorm_in_linear: bool = True,
+    dsparse: bool = False,
 ) -> ModuleSpec:
     if num_experts is None:
         # Dense MLP w/ or w/o TE modules.
-        assert not (layernorm_in_linear and not use_te), "LayerNorm in linear layer is not supported without TE."
+        assert not (
+            layernorm_in_linear and not use_te
+        ), "LayerNorm in linear layer is not supported without TE."
         fc1_cls = None
         if use_te and layernorm_in_linear:
             fc1_cls = TELayerNormColumnParallelLinear
@@ -110,8 +134,7 @@ def _get_mlp_module_spec(
         return ModuleSpec(
             module=MLP,
             submodules=MLPSubmodules(
-                linear_fc1=fc1_cls,
-                linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
+                linear_fc1=fc1_cls, linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
             ),
         )
     else:
@@ -123,12 +146,9 @@ def _get_mlp_module_spec(
             else None,
         )
 
-def get_gpt_dsparse_layer_with_transformer_engine_spec(
-   use_te: bool = True, 
-) -> ModuleSpec:
-    mlp = _get_dsparse_mlp_module_spec(
-        use_te=use_te
-    )
+
+def get_gpt_dsparse_layer_with_transformer_engine_spec(use_te: bool = True,) -> ModuleSpec:
+    mlp = _get_dsparse_mlp_module_spec(use_te=use_te)
     return ModuleSpec(
         module=TransformerLayer,
         submodules=TransformerLayerSubmodules(
@@ -149,10 +169,9 @@ def get_gpt_dsparse_layer_with_transformer_engine_spec(
         ),
     )
 
+
 # Helper function to get module spec for MLP/MoE
-def _get_dsparse_mlp_module_spec(
-    use_te: bool = True
-) -> ModuleSpec:
+def _get_dsparse_mlp_module_spec(use_te: bool = True) -> ModuleSpec:
     # Dense MLP w/ or w/o TE modules.
     return ModuleSpec(
         module=MLPDShard,

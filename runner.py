@@ -87,7 +87,9 @@ def parse_args() -> Tuple[Arguments, list]:
     parser.add_argument(
         "--wandb-project", type=str, default="megatron-dsparse", help="Wandb project"
     )
-    parser.add_argument("--num-tokens", type=float, default=None, help="Number of tokens to train for")
+    parser.add_argument(
+        "--num-tokens", type=float, default=None, help="Number of tokens to train for"
+    )
     parser.add_argument("--steps", type=int, default=None, help="Number of steps to run")
     parser.add_argument(
         "--lr-warmup-fraction", type=float, default=0.01, help="Learning rate warmup fraction"
@@ -237,7 +239,7 @@ def get_training_arguments(args: Arguments, current: dict) -> dict:
         res["finetune"] = ()
 
     batch_size = current["global_batch_size"]
-    seq_length =  current["seq_length"]
+    seq_length = current["seq_length"]
     if args.steps:
         res["train_iters"] = args.steps
     else:

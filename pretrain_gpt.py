@@ -21,18 +21,20 @@ from megatron.core.transformer.spec_utils import import_module
 from megatron.training.utils import (
     get_batch_on_this_cp_rank,
     get_batch_on_this_tp_rank,
-    average_losses_across_data_parallel_group
+    average_losses_across_data_parallel_group,
 )
 from megatron.training.arguments import core_transformer_config_from_args
 from megatron.training.yaml_arguments import core_transformer_config_from_yaml
 from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_layer_with_transformer_engine_spec, 
+    get_gpt_layer_with_transformer_engine_spec,
     get_gpt_dsparse_layer_with_transformer_engine_spec,
     get_gpt_layer_local_spec,
 )
 
 
-def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megatron.legacy.model.GPTModel]:
+def model_provider(
+    pre_process=True, post_process=True
+) -> Union[GPTModel, megatron.legacy.model.GPTModel]:
     """Builds the model.
 
     If you set the use_mcore_models to True, it will return the mcore GPT model and if not the legacy GPT model.
@@ -59,13 +61,21 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
     if args.use_mcore_models:
         if args.spec is not None:
             transformer_layer_spec = import_module(args.spec)
-        elif args.dsparse_factor is not None:
+        elif args.dsparse_block_width is not None:
             transformer_layer_spec = get_gpt_dsparse_layer_with_transformer_engine_spec()
         else:
             if use_te:
-                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args.num_experts, args.moe_grouped_gemm, nonparametric_layernorm=nonparametric_layernorm)
+                transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
+                    args.num_experts,
+                    args.moe_grouped_gemm,
+                    nonparametric_layernorm=nonparametric_layernorm,
+                )
             else:
-                transformer_layer_spec = get_gpt_layer_local_spec(args.num_experts, args.moe_grouped_gemm, nonparametric_layernorm=nonparametric_layernorm)
+                transformer_layer_spec = get_gpt_layer_local_spec(
+                    args.num_experts,
+                    args.moe_grouped_gemm,
+                    nonparametric_layernorm=nonparametric_layernorm,
+                )
 
         model = GPTModel(
             config=config,
@@ -82,14 +92,16 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
             rotary_base=args.rotary_base,
         )
     else:
-        assert(args.context_parallel_size == 1), "Context parallelism is only supported with Megatron Core!"
+        assert (
+            args.context_parallel_size == 1
+        ), "Context parallelism is only supported with Megatron Core!"
 
         model = megatron.legacy.model.GPTModel(
             config,
             num_tokentypes=0,
             parallel_output=True,
             pre_process=pre_process,
-            post_process=post_process
+            post_process=post_process,
         )
 
     return model
@@ -109,6 +121,7 @@ def get_batch(data_iterator):
     batch = get_batch_on_this_cp_rank(batch)
 
     return batch.values()
+
 
 def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     """Loss function.
@@ -154,18 +167,18 @@ def forward_step(data_iterator, model: GPTModel):
 
     # Get the batch.
     timers('batch-generator', log_level=2).start()
-    tokens, labels, loss_mask, attention_mask, position_ids = get_batch(
-        data_iterator)
+    tokens, labels, loss_mask, attention_mask, position_ids = get_batch(data_iterator)
     timers('batch-generator').stop()
 
-    output_tensor = model(tokens, position_ids, attention_mask,
-                          labels=labels)
+    output_tensor = model(tokens, position_ids, attention_mask, labels=labels)
 
     return output_tensor, partial(loss_func, loss_mask)
 
 
 def is_dataset_built_on_rank():
-    return (mpu.is_pipeline_first_stage() or mpu.is_pipeline_last_stage()) and mpu.get_tensor_model_parallel_rank() == 0
+    return (
+        mpu.is_pipeline_first_stage() or mpu.is_pipeline_last_stage()
+    ) and mpu.get_tensor_model_parallel_rank() == 0
 
 
 def core_gpt_dataset_config_from_args(args):
@@ -206,10 +219,7 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     print_rank_0("> building train, validation, and test datasets for GPT ...")
 
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-        dataset_type,
-        train_val_test_num_samples,
-        is_dataset_built_on_rank,
-        config
+        dataset_type, train_val_test_num_samples, is_dataset_built_on_rank, config
     ).build()
 
     print_rank_0("> finished creating GPT datasets ...")
@@ -222,8 +232,10 @@ if __name__ == "__main__":
     # Temporary for transition to core datasets
     train_valid_test_datasets_provider.is_distributed = True
 
-    pretrain(train_valid_test_datasets_provider,
-             model_provider,
-             ModelType.encoder_or_decoder,
-             forward_step,
-             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+    pretrain(
+        train_valid_test_datasets_provider,
+        model_provider,
+        ModelType.encoder_or_decoder,
+        forward_step,
+        args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
+    )

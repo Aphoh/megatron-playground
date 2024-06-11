@@ -72,7 +72,7 @@ def _get_param_groups(
                 scale_lr = scale_lr_cond(name, param)
             else:
                 scale_lr = False
-            
+
             if not no_wd and not scale_lr:
                 param_wd_mult, param_lr_mult = 1.0, 1.0
             elif not no_wd and scale_lr:
@@ -109,7 +109,7 @@ def _get_param_groups(
     for i, p in enumerate(param_groups):
         print_rank_0(
             f"Got param group {i} with wd_mult={p['wd_mult']}, lr_mult={p['lr_mult']}, is_expert_parallel={p['is_expert_parallel']}, num_params={len(p['params'])}"
-            )
+        )
 
     return param_groups
 

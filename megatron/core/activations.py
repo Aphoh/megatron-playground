@@ -1,4 +1,9 @@
-from megatron.core.fusions import fused_bias_gelu, fused_bias_swiglu, fused_bias_geglu, fused_bias_swash
+from megatron.core.fusions import (
+    fused_bias_gelu,
+    fused_bias_swiglu,
+    fused_bias_geglu,
+    fused_bias_swash,
+)
 import torch.nn.functional as F
 import torch
 
@@ -7,9 +12,13 @@ silu = F.silu
 relu = F.relu
 gelu_exact = fused_bias_gelu.gelu_exact
 gelu_approx = fused_bias_gelu.gelu_approx
+
+
 @torch.compile
 def relu_squared(x):
     return torch.pow(F.relu(x), 2)
+
+
 swash = fused_bias_swash.swash
 
 
@@ -40,6 +49,7 @@ ACTIVATIONS = {
     'swash': swash,
 }
 
+
 def get_fused_bias_act(act, glu):
     res = {
         (relu, True): bias_reglu,
@@ -51,6 +61,7 @@ def get_fused_bias_act(act, glu):
         (swash, True): bias_swaglu,
     }
     return res.get((act, glu), None)
+
 
 def get_fused_act(act, glu):
     res = {

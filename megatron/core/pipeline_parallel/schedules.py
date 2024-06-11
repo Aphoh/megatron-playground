@@ -10,7 +10,7 @@ from megatron.core import parallel_state
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
 from megatron.core.transformer.moe.router import MoEAuxLossAutoScaler
-from megatron.core.transformer.mlp import EffLossScaler
+from megatron.core.transformer.mlp import GateLossScaler
 from megatron.core.utils import get_attr_wrapped_model, get_model_config, get_model_type
 
 # Types
@@ -209,20 +209,20 @@ def forward_step(
     if config.timers is not None:
         config.timers('forward-compute').stop()
 
+    # Calculate the loss scale based on the grad_scale_func if available, else default to 1.
+    loss_scale = (
+        config.grad_scale_func(torch.tensor(1.0, device=output_tensor.device))
+        if config.grad_scale_func is not None
+        else torch.tensor(1.0)
+    )
     # Set the loss scale for the auxiliary loss of the MoE layer.
     # Since we use a trick to do backward on the auxiliary loss, we need to set the scale explicitly.
     if hasattr(config, 'num_moe_experts') and config.num_moe_experts is not None:
-        # Calculate the loss scale based on the grad_scale_func if available, else default to 1.
-        loss_scale = (
-            config.grad_scale_func(torch.tensor(1.0, device=output_tensor.device))
-            if config.grad_scale_func is not None
-            else torch.tensor(1.0)
-        )
         # Set the loss scale
         MoEAuxLossAutoScaler.set_loss_scale(loss_scale / num_microbatches)
 
-    if hasattr(config, "mlp_eff_loss") and config.mlp_eff_loss:
-        EffLossScaler.set_loss_scale(torch.tensor(1.0, device=output_tensor.device)/ num_microbatches)
+    if hasattr(config, "gate_aux_losses") and config.gate_aux_losses:
+        GateLossScaler.set_loss_scale(loss_scale / num_microbatches)
 
     # If T5 model (or other model with encoder and decoder)
     # and in decoder stack, then send encoder_hidden_state

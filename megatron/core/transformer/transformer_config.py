@@ -2,7 +2,7 @@
 
 import types
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, List
 import megatron.core.activations as mact
 
 import torch
@@ -256,20 +256,16 @@ class TransformerConfig(ModelParallelConfig):
     disable_parameter_transpose_cache: bool = False
     """When set to true, the parameter transposes are not cached for subsequent iterations."""
 
-    dsparse_factor: int = None
-    """If not None, use 1/dsparse_factor sparsity in the mlp layers. Defaults to None."""
-    dsparse_nblocks: int = None
+    dsparse_block_width: int = None
     """If None and dsparse_factor is set, uses ffn_hidden_size blocks. Defaults to None."""
-    dsparse_normalize_mask: bool = False
-    """If true, normalizes the dsparse mask to have unit mean per token"""
     dsparse_router_init_method: Callable = None
     """Method that initializes the router weights. Defaults to init_method."""
-    dsparse_bias: bool = False
-    """Whether the dsparse act map should have bias"""
-    dsparse_bias_init_1: bool = False
-    """init dsparse bias to 1"""
-    mlp_eff_loss: bool = None
-    """Loss coefficient for the MLP efficiency loss. Defaults to 0.0."""
+    dsparse_router_loss_coeff: float = 0.01
+    """Scaling coefficient for the router loss. Defaults to 0.01."""
+    gate_aux_losses: List[str] = []
+    """Apply auxiliar losses to the gate. Defaults to an empty list. Options are 'eff', 'group_entropy' """
+    gate_aux_loss_coeffs: List[float] = []
+    """Loss coefficients for the gate auxiliar losses. Defaults to an empty list. """
     # These 2 attributes are WAR for TRTLLM export. DO NOT USE!! WILL BE DEPRECATED SOON!!
     max_position_embeddings: int = 0
     """Deprecated. Do not use."""
@@ -296,19 +292,11 @@ class TransformerConfig(ModelParallelConfig):
         if self.ffn_hidden_size is None:
             self.ffn_hidden_size = 4 * self.hidden_size
 
-        if self.dsparse_factor is not None:
-            if self.dsparse_factor <= 0:
-                raise ValueError(f'dsparse_factor={self.dsparse_factor} must be positive.')
-            if self.dsparse_nblocks is None:
-                self.dsparse_nblocks = self.ffn_hidden_size 
-            if self.dsparse_nblocks % self.dsparse_factor != 0:
-                raise ValueError(
-                    f"dsparse_nblocks ({self.dsparse_nblocks}) must be a multiple of dsparse_factor ({self.dsparse_factor})."
-                )
-            if self.ffn_hidden_size % self.dsparse_nblocks != 0:
-                raise ValueError(
-                    f'ffn_hidden_size: {self.ffn_hidden_size} must be divisible by dsparse_nblocks: {self.dsparse_nblocks}'
-                )
+        if self.ffn_hidden_size % self.dsparse_block_width != 0:
+            raise ValueError(
+                f"ffn_hidden_size ({self.ffn_hidden_size}) must be a multiple of "
+                f"dsparse_block_width ({self.dsparse_block_width})."
+            )
 
         if self.kv_channels is None:
             self.kv_channels = self.hidden_size // self.num_attention_heads
@@ -395,7 +383,12 @@ class TransformerConfig(ModelParallelConfig):
             if not self.add_bias_linear:
                 raise ValueError("Cannot fuse bias and activation without bias.")
 
-            if self.activation_func not in [mact.gelu_exact, mact.gelu_approx, mact.silu, mact.relu]:
+            if self.activation_func not in [
+                mact.gelu_exact,
+                mact.gelu_approx,
+                mact.silu,
+                mact.relu,
+            ]:
                 raise ValueError(
                     "When bias_activation_fusion is True, activation function should be either gelu, silu"
                 )
@@ -409,5 +402,12 @@ class TransformerConfig(ModelParallelConfig):
             self.output_layer_init_method = scaled_init_method_normal(
                 self.init_method_std, self.num_layers
             )
-        if self.dsparse_factor and self.dsparse_router_init_method is None:
+        if self.dsparse_block_width and self.dsparse_router_init_method is None:
             self.dsparse_router_init_method = self.init_method
+
+        if len(self.gate_aux_losses) != len(self.gate_aux_loss_coeffs):
+            raise ValueError(
+                f'gate_aux_losses: {self.gate_aux_losses} and gate_aux_loss_coeffs: {self.gate_aux_loss_coeffs} must have the same length.'
+            )
+        if "group_entropy" in self.gate_aux_losses:
+            assert self.dsparse_block_width is not None

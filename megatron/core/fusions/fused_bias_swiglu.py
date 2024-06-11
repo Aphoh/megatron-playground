@@ -80,15 +80,18 @@ def bias_swiglu_impl(input, bias):
 # bias_swiglu_impl = BiasSwiGLUFunction.apply
 # swiglu_impl = SwiGLUFunction.apply
 
+
 @jit_fuser
 def reglu(y):
     y_1, y_2 = torch.chunk(y, 2, -1)
     return F.relu(y_1) * y_2
 
+
 @jit_fuser
 def _bias_reglu_impl(y, bias):
     y = y + bias
     return reglu(y)
+
 
 def bias_reglu(input, bias):
     ori_shape = input.shape
