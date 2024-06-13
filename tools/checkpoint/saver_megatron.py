@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION. All rights reserved.
 
 from arg_utils import ModelDescriptor
 import os
@@ -17,13 +17,15 @@ def add_arguments(parser):
 
     group.add_argument('--target-tensor-parallel-size', type=int,
                        help='Target tensor model parallel size, defaults to the tensor parallel size '
-                       'in the input checkpoint if provided by the loader, otherwise to 1')
+                            'in the input checkpoint if provided by the loader, otherwise to 1')
     group.add_argument('--target-pipeline-parallel-size', type=int,
                        help='Target tensor model parallel size, default to the pipeline parall size '
                        'in the input checkpoint if provided by the loader, otherwise to 1')
+    group.add_argument('--saver-transformer-impl', default='local',
+                       choices=['local', 'transformer_engine'],
+                       help='Which Transformer implementation to use.')
 
 def save_checkpoint(queue, args):
-
     # Search in directory above this
     sys.path.append(os.path.abspath(
         os.path.join(os.path.dirname(__file__),
@@ -108,7 +110,6 @@ def save_checkpoint(queue, args):
     if args.target_pipeline_parallel_size is None:
         args.target_pipeline_parallel_size = md.previous_pipeline_parallel_size
 
-
     # Arguments do sanity checks on the world size, but we don't care,
     # so trick it into thinking we are plenty of processes
     if args.target_tensor_parallel_size is not None and args.target_pipeline_parallel_size is not None:
@@ -178,7 +179,7 @@ def save_checkpoint(queue, args):
                         'encoder_num_layers', 'encoder_seq_length',
                         'distribute_saved_activations',
                         'train_iters', 'lr_decay_iters', 'lr_warmup_iters', 'lr_warmup_fraction',
-                        'start_weight_decay', 'end_weight_decay']
+                        'start_weight_decay', 'end_weight_decay', 'bf16', 'fp16']
 
 
         for arg, value in md.checkpoint_args.items():
@@ -192,6 +193,13 @@ def save_checkpoint(queue, args):
                 setattr(margs, arg, value)
 
     validate_args(margs)
+
+    # Use MLM models.
+    margs.use_mcore_models = False
+    margs.transformer_impl = args.saver_transformer_impl
+
+    # Do not instantiate Tensorboard
+    margs.tensorboard_dir = None
 
     set_global_variables(margs, build_tokenizer=False)
 
@@ -232,7 +240,7 @@ def save_checkpoint(queue, args):
     # fake initializing distributed
 
     # Embeddings
-    #-----------
+    # -----------
     embeddings_msg = queue_get("embeddings")
 
     pos_embed = None
@@ -330,7 +338,6 @@ def save_checkpoint(queue, args):
 
             total_layer_num = total_layer_num + 1
             check_message(msg)
-
 
         if post_process:
             msg = queue_get("final norm")

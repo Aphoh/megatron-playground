@@ -2,6 +2,7 @@
 """Pretrain vision language model."""
 from copy import deepcopy
 from functools import partial
+from types import SimpleNamespace
 
 import torch
 
@@ -9,9 +10,11 @@ from megatron.training import get_args, get_timers, get_tokenizer, print_rank_0
 from megatron.training.arguments import core_transformer_config_from_args
 from megatron.core import tensor_parallel
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
+from megatron.core.datasets.gpt_dataset import MockGPTLowLevelDataset
 from megatron.core.datasets.multimodal_dataset import MockMultimodalDataset, MultimodalDatasetConfig
 from megatron.core.enums import ModelType
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.transformer.spec_utils import import_module
 from megatron.training import pretrain
@@ -41,10 +44,11 @@ def model_provider(pre_process=True, post_process=True) -> LLaVAModel:
         language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
             args.num_experts, args.moe_grouped_gemm
         )
+    
+    vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
 
     # TODO: Make these configurable via input .yaml config.
     vision_transformer_config = deepcopy(language_transformer_config)
-    vision_transformer_layer_spec = deepcopy(language_transformer_layer_spec)
 
     vision_projection_type = "mlp"
     vision_projection_config = deepcopy(language_transformer_config)
@@ -76,27 +80,23 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     """
     args = get_args()
 
-    tokenizer = get_tokenizer()
-
     config = MultimodalDatasetConfig(
         random_seed=args.seed,
+        split=args.split,
         sequence_length=args.seq_length,
-        tokenizer=tokenizer,
+        tokenizer=get_tokenizer(),
         reset_position_ids=args.reset_position_ids,
         reset_attention_mask=args.reset_attention_mask,
         eod_mask_loss=args.eod_mask_loss,
-        mock=True,
         image_h=args.img_h,
         image_w=args.img_w,
         preprocess_func=_preprocess_data_for_llava,
     )
 
-    dataset_type = MockMultimodalDataset
-
     print_rank_0("> building train, validation, and test datasets for multimodal ...")
 
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
-        dataset_type, train_val_test_num_samples, is_dataset_built_on_rank, config
+        MockMultimodalDataset, train_val_test_num_samples, is_dataset_built_on_rank, config
     ).build()
 
     print_rank_0("> finished creating multimodal datasets ...")

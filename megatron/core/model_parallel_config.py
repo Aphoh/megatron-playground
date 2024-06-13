@@ -42,6 +42,13 @@ class ModelParallelConfig:
     expert_model_parallel_size: int = 1
     """Distributes Moe Experts across sub data parallel dimension."""
 
+    moe_extended_tp: bool = False
+    """Alternative parallelization strategy for expert parallelism. Instead of distributing experts
+       across expert_model_parallel_size, each expert is sharded along extendended tensor parallel
+       domain (tensor_model_paralle_size * expert_model_parallel_size). It avoids the load balancing
+       problem with MOE training. 
+    """
+
     ###################
     # Initialization
     ###################
@@ -126,9 +133,12 @@ class ModelParallelConfig:
     """
 
     async_tensor_model_parallel_allreduce: bool = False
-    """If true, enables asynchronous execution of tensor-model-parallel all-reduce with weight
-       gradient compuation of a column-linear layer.
+    """NOTE: Deprecated. This flag is ignored."""
+
+    use_te_rng_tracker: bool = False
+    """If true, uses RNG state tracker in TransformerEngine if exists.
     """
+
     tp_comm_overlap: bool = False
     """If true, allows overlapping of Linear layer execution with tensor parallel communication
        collectives like AllGather/ReduceScatter. Overlapping is done for the linear layers wherever
@@ -153,6 +163,11 @@ class ModelParallelConfig:
     tp_comm_overlap_rs: bool = True
     """If true, allows Reduce-Scatter overlap with GEMM by pipelining the GEMM and Reduce-Scatter.
        Don't care if tp_comm_overlap is False.
+    """
+
+    tp_comm_overlap_rs_dgrad: bool = False
+    """If true, allows Reduce-Scatter overlap with DGRAD GEMM by pipelining the
+       GEMM and Reduce-Scatter splits. Don't care if tp_comm_overlap is False.
     """
 
     tp_comm_split_ag: bool = True
@@ -217,7 +232,7 @@ class ModelParallelConfig:
     """
 
     defer_embedding_wgrad_compute: bool = False
-    """If true, defers the embedding WGRAD GEMMs while pipeline flush is 
+    """If true, defers the embedding WGRAD GEMMs while pipeline flush is
        taking place enabling us to hide pipeline flush latency. Defaults to False.
     """
 
@@ -260,9 +275,6 @@ class ModelParallelConfig:
         if self.sequence_parallel:
             if self.tensor_model_parallel_size <= 1:
                 raise ValueError("Can not use sequence paralllelism without tensor parallelism")
-            if self.async_tensor_model_parallel_allreduce:
-                # sequence_parallelism already does this async
-                self.async_tensor_model_parallel_allreduce = False
 
         if self.pipeline_model_parallel_size > 1:
             if self.pipeline_dtype is None:
