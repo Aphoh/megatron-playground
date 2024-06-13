@@ -32,14 +32,12 @@ class MegatronModule(torch.nn.Module):
 
     Args:
         config (TransformerConfig): Transformer config
-        short_name (str, optional): Short name for the module to use when logging. Defaults to None.
     """
 
     # def __init__(self, config: TransformerConfig, share_word_embeddings=True):
-    def __init__(self, config: TransformerConfig, short_name: str = None):
+    def __init__(self, config: TransformerConfig):
         super().__init__()
         self.config = config
-        self.short_name = short_name
 
     def state_dict_for_save_checkpoint(self, prefix: str = '', keep_vars: bool = False):
         """Override state dict for saving checkpoints Use this function to override the

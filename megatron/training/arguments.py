@@ -1656,8 +1656,7 @@ def _add_experimental_args(parser):
                        help = 'Config file to add additional arguments')
     group.add_argument("--pre-validate", action="store_true", help="Run validation before training")
     group.add_argument("--relu", action="store_true", help="Use ReLU activation function") #TODO reglu and geglu
-    group.add_argument("--gelu-exact", action="store_true", help="Use ReLU activation function")
-    group.add_argument("--log-activation-sparsity", action="store_true", help="Log activation sparsity")
-    group.add_argument("--mlp-eff-loss", type=float, default=None, help="Mlp eff loss")
+    group.add_argument("--gelu-exact", action="store_true", help="Use exact gelu activation function")
+    group.add_argument("--mlp-log-gate-stats", action="store_true", help="Log activation sparsity")
 
     return parser
